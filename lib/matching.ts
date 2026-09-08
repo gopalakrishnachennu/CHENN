@@ -18,7 +18,7 @@ export type JobMatch = {
   id: string; jobId: string; candidateId: string; eligibility: 'Eligible' | 'Review' | 'Ineligible';
   score: number; scores: { skills: number; role: number; location: number; experience: number; preferences: number };
   missingMandatory: string[]; reasons: string[]; decision: 'Selected' | 'Review' | 'Rejected';
-  reviewedDecision?: 'Approved' | 'Rejected'; reviewReason?: string; applicationId?: string;
+  reviewedDecision?: 'Approved' | 'Rejected'; reviewReason?: string; reviewedAt?: string; reviewedBy?: string; applicationId?: string;
   updatedAt: string; policyVersion: string;
 };
 export const normalize = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');
@@ -114,7 +114,13 @@ export function parseJobImport(text: string): Record<string, unknown>[] {
   text = text.replace(/^\uFEFF/, '').trim();
   if (text.startsWith('[')) {
     const data = JSON.parse(text); if (!Array.isArray(data) || data.some(x => !x || typeof x !== 'object' || Array.isArray(x))) throw new Error('Expected an array of job objects.');
-    if (data.length > 100) throw new Error('Import at most 100 jobs at a time.'); return data;
+    if (data.length > 100) throw new Error('Import at most 100 jobs at a time.'); return adaptJobFeed(data);
+  }
+  if (text.startsWith('{')) {
+    const envelope = JSON.parse(text) as Record<string, unknown>;
+    const rows = ['jobs', 'results', 'data'].map(key => envelope[key]).find(value => Array.isArray(value));
+    if (!rows) throw new Error('JSON must be an array or contain a jobs, results, or data array.');
+    return adaptJobFeed(rows as Record<string, unknown>[]);
   }
   const rows: string[][] = []; let row: string[] = [], value = '', quoted = false;
   for (let i = 0; i < text.length; i++) {
@@ -129,4 +135,18 @@ export function parseJobImport(text: string): Record<string, unknown>[] {
   if (new Set(headers).size !== headers.length) throw new Error('CSV has duplicate column names.');
   if (rows.length > 100) throw new Error('Import at most 100 jobs at a time.');
   return rows.filter(r => r.some(Boolean)).map(r => { if (r.length !== headers.length) throw new Error('CSV column count does not match its headers.'); return Object.fromEntries(headers.map((h, i) => [h, r[i]])); });
+}
+
+/** Normalize common public ATS export shapes without making network calls or guessing a family. */
+export function adaptJobFeed(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+  return rows.map(row => {
+    const categories = row.categories as Record<string, unknown> | undefined;
+    const location = typeof row.location === 'object' && row.location ? String((row.location as Record<string, unknown>).name ?? '') : String(row.location ?? row.locationName ?? '');
+    const title = row.title ?? row.name ?? '';
+    return { ...row, company: row.company ?? row.companyName ?? row.organization ?? '', title,
+      role: row.role ?? title, location, workType: row.workType ?? row.workplaceType ?? row.workplace_type ?? 'Not specified',
+      jdText: row.jdText ?? row.description ?? row.content ?? row.text ?? '', sourceUrl: row.sourceUrl ?? row.absolute_url ?? row.hostedUrl ?? row.url ?? '',
+      source: row.source ?? (row.hostedUrl ? 'Lever' : row.absolute_url ? 'Greenhouse' : 'Import'), family: row.family ?? '',
+      mandatorySkills: row.mandatorySkills ?? categories?.skills ?? '' };
+  });
 }

@@ -955,6 +955,8 @@ export async function runFirebaseAction(
       const catalog = (await getDoc(doc(firebaseDb, 'catalogJobs', job.catalogId))).data() as CatalogJob;
       const match = evaluateMatch(catalog, candidate);
       if (match.eligibility === 'Ineligible' || match.score < 70) throw new Error('This match is no longer eligible. Recheck it in Job matching.');
+      const approved = (await getDoc(doc(firebaseDb, 'jobMatches', `${job.catalogId}_${job.candidateId}`))).data() as { reviewedDecision?: string; applicationId?: string } | undefined;
+      if (approved?.reviewedDecision !== 'Approved' || approved.applicationId !== job.id) throw new Error('Approve this job-candidate match in Job matching before generating a resume.');
     }
     const family = await familyByName(job.family);
     const settings = await mergedSettings();

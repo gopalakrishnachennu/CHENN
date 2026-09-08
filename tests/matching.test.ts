@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { catalogId, evaluateMatch, normalizeJob, parseJobImport, preferences, type CatalogJob } from '../lib/matching';
+import { adaptJobFeed, catalogId, evaluateMatch, normalizeJob, parseJobImport, preferences, type CatalogJob } from '../lib/matching';
 import type { Candidate } from '../lib/types';
 
 const job: CatalogJob = { ...normalizeJob({ company: 'Acme', title: 'Platform Engineer', family: 'DevOps', role: 'Platform Engineer', location: 'Seattle', workType: 'Hybrid', authorization: 'US authorized', seniority: 'Senior', minimumYears: 5, salaryMax: 160000, jdText: 'AWS platform operations', mandatorySkills: ['AWS'], criticalSkills: ['AWS'], preferredSkills: ['Python'], expiresAt: '2027-01-01' }, '2026-09-01T00:00:00Z'), id: 'job' };
@@ -17,6 +17,11 @@ describe('Family + eligibility + score', () => {
   it('does not compare salaries across currencies', () => { expect(evaluate({ ...job, currency: 'EUR' }).decision).toBe('Review'); });
   it('rejects invalid thresholds and numeric input', () => { expect(() => preferences({ minimumScore: 101 })).toThrow(); expect(() => normalizeJob({ ...job, minimumYears: 'abc' })).toThrow(); });
   it('uses aliases without inventing skills', () => { expect(evaluate({ ...job, mandatorySkills: ['Amazon Web Services'], criticalSkills: ['Amazon Web Services'] }).decision).toBe('Selected'); });
+  it('adapts Greenhouse and Lever feed envelopes without guessing family', () => {
+    const rows = parseJobImport(JSON.stringify({ jobs: [{ absolute_url: 'https://boards.greenhouse.io/acme/jobs/1', companyName: 'Acme', title: 'SRE', location: { name: 'Remote' }, content: 'AWS required', family: 'DevOps', workType: 'Remote' }] }));
+    expect(rows[0]).toMatchObject({ source: 'Greenhouse', company: 'Acme', title: 'SRE', location: 'Remote', jdText: 'AWS required', family: 'DevOps' });
+    expect(adaptJobFeed([{ hostedUrl: 'https://jobs.lever.co/acme/1', organization: 'Acme', name: 'Platform', text: 'Kubernetes', family: 'DevOps', locationName: 'Remote' }])[0]).toMatchObject({ source: 'Lever', title: 'Platform', jdText: 'Kubernetes' });
+  });
   it('deduplicates syndicated and case/whitespace variations', async () => { expect(await catalogId(job)).toBe(await catalogId({ ...job, company: '  ACME ' })); expect(await catalogId(job)).not.toBe(await catalogId({ ...job, location: 'Austin' })); });
 });
 describe('Job import', () => {

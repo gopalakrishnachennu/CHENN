@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocs, getFirestore, runTransaction, setDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, getFirestore, runTransaction, setDoc, updateDoc } from 'firebase/firestore';
 import type { User } from 'firebase/auth';
 import { firebaseApp } from './firebase';
 import { ADMIN_EMAIL } from './constants';
@@ -6,10 +6,35 @@ import { catalogId, evaluateMatch, normalizeJob, preferences, type CatalogJob, t
 import type { Candidate } from './types';
 
 const db = getFirestore(firebaseApp, 'chenn');
-export async function readMatchingData(user: User) {
-  requireAdmin(user);
+async function readMatchingDataRaw() {
   const [jobs, matches] = await Promise.all([getDocs(collection(db, 'catalogJobs')), getDocs(collection(db, 'jobMatches'))]);
   return { jobs: jobs.docs.map(d => ({ ...d.data(), id: d.id }) as CatalogJob), matches: matches.docs.map(d => ({ ...d.data(), id: d.id }) as JobMatch) };
+}
+async function expireCatalogJobs() {
+  const now = Date.now();
+  const snapshot = await getDocs(collection(db, 'catalogJobs'));
+  await Promise.all(snapshot.docs.filter(d => d.data().status === 'Open' && Date.parse(String(d.data().expiresAt)) <= now).map(d => updateDoc(d.ref, { status: 'Closed', updatedAt: new Date().toISOString() })));
+}
+async function recalculateMatches() {
+  const [data, candidateDocs] = await Promise.all([readMatchingDataRaw(), getDocs(collection(db, 'candidates'))]);
+  const candidates = candidateDocs.docs.map(d => ({ ...d.data(), id: d.id }) as Candidate);
+  let count = 0;
+  for (const job of data.jobs) for (const candidate of candidates) {
+    await runTransaction(db, async tx => {
+      const ref = doc(db, 'jobMatches', `${job.id}_${candidate.id}`);
+      const [previous, freshJob, freshCandidate] = await Promise.all([tx.get(ref), tx.get(doc(db, 'catalogJobs', job.id)), tx.get(doc(db, 'candidates', candidate.id))]);
+      if (!freshJob.exists() || !freshCandidate.exists()) return;
+      const match = evaluateMatch(freshJob.data() as CatalogJob, freshCandidate.data() as Candidate);
+      tx.set(ref, { ...previous.data(), ...match });
+    }); count++;
+  }
+  return count;
+}
+export async function readMatchingData(user: User) {
+  requireAdmin(user);
+  await expireCatalogJobs();
+  await recalculateMatches();
+  return readMatchingDataRaw();
 }
 function requireAdmin(user: User) {
   if (!user.emailVerified || user.email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) throw new Error('Verified administrator access required.');
@@ -55,20 +80,8 @@ export async function savePreferences(user: User, candidateId: string, input: Pa
 }
 export async function runMatching(user: User) {
   requireAdmin(user);
-  const [data, candidateDocs] = await Promise.all([readMatchingData(user), getDocs(collection(db, 'candidates'))]);
-  const candidates = candidateDocs.docs.map(d => ({ ...d.data(), id: d.id }) as Candidate);
-  let count = 0;
-  for (const job of data.jobs) for (const candidate of candidates) {
-    await runTransaction(db, async tx => {
-      const ref = doc(db, 'jobMatches', `${job.id}_${candidate.id}`);
-      const [previous, freshJob, freshCandidate] = await Promise.all([tx.get(ref), tx.get(doc(db, 'catalogJobs', job.id)), tx.get(doc(db, 'candidates', candidate.id))]);
-      if (!freshJob.exists() || !freshCandidate.exists()) return;
-      const match = evaluateMatch(freshJob.data() as CatalogJob, freshCandidate.data() as Candidate);
-      // Preserve decisions and application links even if another admin approves during recalculation.
-      tx.set(ref, { ...previous.data(), ...match });
-    }); count++;
-  }
-  return count;
+  await expireCatalogJobs();
+  return recalculateMatches();
 }
 export async function decideMatch(user: User, matchId: string, decision: 'Approved' | 'Rejected', reviewReason: string) {
   requireAdmin(user);
@@ -86,7 +99,7 @@ export async function decideMatch(user: User, matchId: string, decision: 'Approv
     const existingApplication = await tx.get(doc(db, 'jobs', applicationId));
     if (decision === 'Approved' && existingApplication.exists()) throw new Error('An application already exists for this candidate and job.');
     const timestamp = new Date().toISOString();
-    const next = { ...fresh, reviewedDecision: decision, reviewReason: reviewReason.trim(), ...(decision === 'Approved' ? { applicationId } : {}) };
+    const next = { ...fresh, reviewedDecision: decision, reviewReason: reviewReason.trim(), reviewedAt: timestamp, reviewedBy: user.email, ...(decision === 'Approved' ? { applicationId } : {}) };
     tx.set(ref, next);
     if (decision === 'Approved') {
       tx.set(doc(db, 'candidateCatalogAccess', String(c.data().email), 'jobs', old.jobId), { candidateId: old.candidateId });
