@@ -194,7 +194,7 @@ export type PlatformSettings = {
 export type Announcement = { id: string; title: string; message: string; active: boolean; createdAt: string };
 export type Evaluation = { id: string; name: string; status: string; score: number; results: Record<string, unknown>; createdAt: string };
 export type AuditLog = { id: string; actorEmail: string; action: string; entityType: string; entityId: string; details: Record<string, unknown>; createdAt: string };
-export type OnboardingInvite = { id: string; status: 'Open' | 'Used' | 'Revoked'; expiresAt: string; createdAt: string; createdBy: string; submissionId?: string };
+export type OnboardingInvite = { id: string; status: 'Open' | 'Used' | 'Revoked'; expiresAt: string; expiresAtMs: number; createdAt: string; createdBy: string; submissionId?: string };
 export type OnboardingSubmission = {
   id: string; inviteId: string; status: 'Pending' | 'Approved' | 'Rejected';
   firstName: string; lastName: string; email: string; phone: string; location: string; headline: string; family: string;

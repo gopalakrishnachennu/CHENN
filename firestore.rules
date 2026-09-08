@@ -11,7 +11,7 @@ service cloud.firestore {
     }
 
     function anonymous() {
-      return request.auth != null && request.auth.token.email == null;
+      return request.auth != null && request.auth.token.firebase.sign_in_provider == 'anonymous';
     }
 
     function ownsCandidate(candidateId) {
@@ -98,7 +98,7 @@ service cloud.firestore {
     }
 
     match /onboardingInvites/{inviteId} {
-      allow read: if isAdmin() || (anonymous() && resource.data.status == 'Open' && resource.data.expiresAt > request.time);
+      allow read: if isAdmin() || (anonymous() && resource.data.status == 'Open' && (!('expiresAtMs' in resource.data) || resource.data.expiresAtMs > request.time.toMillis()));
       allow write: if isAdmin();
     }
 
@@ -109,7 +109,7 @@ service cloud.firestore {
         && request.resource.data.inviteId is string
         && exists(/databases/$(database)/documents/onboardingInvites/$(request.resource.data.inviteId))
         && get(/databases/$(database)/documents/onboardingInvites/$(request.resource.data.inviteId)).data.status == 'Open'
-        && get(/databases/$(database)/documents/onboardingInvites/$(request.resource.data.inviteId)).data.expiresAt > request.time;
+        && (!('expiresAtMs' in get(/databases/$(database)/documents/onboardingInvites/$(request.resource.data.inviteId)).data) || get(/databases/$(database)/documents/onboardingInvites/$(request.resource.data.inviteId)).data.expiresAtMs > request.time.toMillis());
       allow update, delete: if isAdmin();
     }
 
