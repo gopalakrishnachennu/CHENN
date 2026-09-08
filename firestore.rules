@@ -1,0 +1,100 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null && request.auth.token.email is string;
+    }
+
+    function isAdmin() {
+      return signedIn() && request.auth.token.email == 'gopalakrishnachennu@gmail.com';
+    }
+
+    function ownsCandidate(candidateId) {
+      let candidate = get(/databases/$(database)/documents/candidates/$(candidateId));
+      return signedIn()
+        && candidate.data.email == request.auth.token.email
+        && candidate.data.portalEnabled == true
+        && candidate.data.status != 'Archived';
+    }
+
+    match /candidates/{candidateId} {
+      allow read: if isAdmin() || (
+        signedIn() && resource.data.email == request.auth.token.email
+      );
+      allow write: if isAdmin();
+    }
+
+    match /jobs/{jobId} {
+      allow read: if isAdmin() || ownsCandidate(resource.data.candidateId);
+      allow write: if isAdmin();
+    }
+
+    match /catalogJobs/{jobId} {
+      allow read: if isAdmin() || (
+        signedIn() && exists(/databases/$(database)/documents/candidateCatalogAccess/$(request.auth.token.email)/jobs/$(jobId))
+        && ownsCandidate(get(/databases/$(database)/documents/candidateCatalogAccess/$(request.auth.token.email)/jobs/$(jobId)).data.candidateId)
+      );
+      allow write: if isAdmin();
+    }
+
+    match /jobMatches/{matchId} {
+      allow read: if isAdmin() || ownsCandidate(resource.data.candidateId);
+      allow write: if isAdmin();
+    }
+    match /candidateCatalogAccess/{email}/jobs/{jobId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /resumes/{resumeId} {
+      allow read: if isAdmin() || (
+        ownsCandidate(resource.data.candidateId)
+        && resource.data.candidateVisible == true
+      );
+      allow write: if isAdmin();
+    }
+
+    match /events/{eventId} {
+      allow read: if isAdmin() || ownsCandidate(resource.data.candidateId);
+      allow write: if isAdmin();
+    }
+
+    match /files/{fileId} {
+      allow read: if isAdmin()
+        || (signedIn() && resource.data.kind == 'logo')
+        || ownsCandidate(resource.data.candidateId);
+      allow write: if isAdmin();
+    }
+
+    match /families/{familyId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    match /settings/{settingId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    match /announcements/{announcementId} {
+      allow read: if isAdmin() || (signedIn() && resource.data.active == true);
+      allow write: if isAdmin();
+    }
+
+    match /prompts/{promptId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /evaluations/{evaluationId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /logs/{logId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

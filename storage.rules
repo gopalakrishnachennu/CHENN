@@ -1,0 +1,35 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null && request.auth.token.email is string;
+    }
+
+    function isAdmin() {
+      return signedIn() && request.auth.token.email == 'gopalakrishnachennu@gmail.com';
+    }
+
+    match /candidate/{candidateId}/{allPaths=**} {
+      allow read: if isAdmin() || (
+        signedIn()
+        && resource.metadata.candidateEmail == request.auth.token.email
+      );
+      allow write: if isAdmin()
+        && request.resource.size < 8 * 1024 * 1024
+        && request.resource.metadata.candidateId == candidateId
+        && request.resource.metadata.candidateEmail is string;
+    }
+
+    match /branding/{allPaths=**} {
+      allow read: if signedIn();
+      allow write: if isAdmin()
+        && request.resource.size < 2 * 1024 * 1024
+        && request.resource.contentType.matches('image/(png|jpeg|webp)');
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

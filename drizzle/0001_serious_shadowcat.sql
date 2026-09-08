@@ -1,0 +1,1 @@
+ALTER TABLE `jobs` ADD `applied_resume_id` text;

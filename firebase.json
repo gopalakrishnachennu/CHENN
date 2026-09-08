@@ -1,0 +1,70 @@
+{
+  "firestore": {
+    "database": "chenn",
+    "location": "nam7",
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "storage": {
+    "rules": "storage.rules"
+  },
+  "hosting": {
+    "site": "chenn",
+    "public": "firebase-dist",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ],
+    "headers": [
+      {
+        "source": "/assets/**",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public,max-age=31536000,immutable"
+          }
+        ]
+      },
+      {
+        "source": "**",
+        "headers": [
+          {
+            "key": "X-Content-Type-Options",
+            "value": "nosniff"
+          },
+          {
+            "key": "Referrer-Policy",
+            "value": "strict-origin-when-cross-origin"
+          },
+          {
+            "key": "Permissions-Policy",
+            "value": "camera=(), microphone=(), geolocation=()"
+          }
+        ]
+      }
+    ]
+  },
+  "auth": {
+    "providers": {
+      "googleSignIn": {
+        "oAuthBrandDisplayName": "ResumeOS",
+        "supportEmail": "gopalakrishnachennu@gmail.com",
+        "authorizedRedirectUris": [
+          "https://resumeos-jd-first.ghs-srm-2022.chatgpt.site",
+          "https://chenn.web.app",
+          "https://chenn.firebaseapp.com",
+          "https://chenn--release-candidate-7mtp0ukr.web.app",
+          "https://chenn--qa-gate-lqzwyz0e.web.app"
+        ]
+      }
+    }
+  },
+  "emulators": {
+    "firestore": { "host": "127.0.0.1", "port": 8180 },
+    "storage": { "host": "127.0.0.1", "port": 9299 },
+    "ui": { "enabled": false }
+  }
+}

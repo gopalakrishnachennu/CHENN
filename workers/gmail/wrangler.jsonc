@@ -1,0 +1,9 @@
+{
+  "name": "chenn-gmail", "main": "index.ts", "compatibility_date": "2026-09-01",
+  "triggers": { "crons": ["* * * * *"] },
+  "vars": {
+    "FIREBASE_PROJECT_ID": "chennu4169", "FIREBASE_DATABASE_ID": "chenn",
+    "PORTAL_ORIGIN": "https://chenn.web.app", "ADMIN_EMAIL": "gopalakrishnachennu@gmail.com"
+  },
+  "d1_databases": [{ "binding": "GMAIL_DB", "database_name": "chenn-gmail", "database_id": "REPLACE_WITH_CREATED_D1_ID", "migrations_dir": "migrations" }]
+}
