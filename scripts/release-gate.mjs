@@ -39,6 +39,9 @@ const requiredActions = [
   'announcement.delete',
   'evaluation.run',
 ];
+// Supported for existing records and migrations, but intentionally omitted from
+// candidate onboarding because verified skills now come from career evidence.
+const headlessActions = ['candidate.skills.replace'];
 const missing = requiredActions.filter(
   (action) => !backend.includes(`action === '${action}'`),
 );
@@ -68,7 +71,7 @@ const uiActionsWithoutHandlers = [...new Set(uiActions)].filter(
   (action) => !requiredActions.includes(action),
 );
 const handlersWithoutUi = requiredActions.filter(
-  (action) => !uiActions.includes(action),
+  (action) => !uiActions.includes(action) && !headlessActions.includes(action),
 );
 if (uiActionsWithoutHandlers.length || handlersWithoutUi.length) {
   throw new Error(
