@@ -86,6 +86,44 @@
   --sidebar-ring: #7b7df0;
 }
 
+.enterprise-surface {
+  border: 1px solid #e2e7ee;
+  border-radius: 0.375rem;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 4%);
+}
+.section-bar {
+  display: flex;
+  min-height: 3rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid #e8ebf0;
+  padding: 0.75rem 1rem;
+}
+.section-heading {
+  font-size: 0.9375rem;
+  font-weight: 650;
+  color: #273144;
+}
+.panel-kicker {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #788296;
+}
+.enterprise-surface dt {
+  font-size: 0.75rem;
+  color: #788296;
+}
+.enterprise-surface dd {
+  margin-top: 0.25rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #303a4d;
+}
+
 .portal-accent-text {
   color: var(--portal-accent, #5b5de4) !important;
 }
@@ -535,7 +573,45 @@
 }
 
 @media (max-width: 640px) {
+  .candidate-desktop-table {
+    display: none;
+  }
+  .candidate-mobile-list {
+    display: block;
+  }
+  .enterprise-toolbar > div:first-child {
+    width: 100%;
+  }
+  .resume-workspace-grid {
+    display: flex;
+    flex-direction: column;
+  }
+  .resume-context {
+    order: 1;
+  }
+  .resume-intelligence {
+    order: 2;
+  }
+  .resume-preview {
+    order: 3;
+    min-height: 0;
+  }
   .resume-list {
     padding-left: 10px;
+  }
+}
+
+@media (min-width: 641px) and (max-width: 1279px) {
+  .resume-workspace-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 0.42fr);
+  }
+  .resume-context {
+    grid-column: 1 / -1;
+  }
+  .resume-preview {
+    grid-column: 1;
+  }
+  .resume-intelligence {
+    grid-column: 2;
   }
 }

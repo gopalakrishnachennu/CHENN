@@ -51,6 +51,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { ResumePaper } from '@/components/resume-paper';
+import { CandidateWorkspace } from '@/components/candidates/candidate-workspace';
+import { ResumeWorkspace } from '@/components/resumes/resume-workspace';
 import { JobMatching } from './job-matching';
 import { GmailPanel } from './gmail-panel';
 import { CareerEditor } from './career-editor';
@@ -95,21 +97,18 @@ type AdminPortalProps = {
   notify: (message: string, tone?: 'success' | 'error') => void;
 };
 
-const primaryNav: { label: AdminPage; icon: typeof LayoutDashboard }[] = [
-  { label: 'Overview', icon: LayoutDashboard },
-  { label: 'Candidates', icon: UsersRound },
-  { label: 'Onboarding', icon: UserPlus },
-  { label: 'Jobs & JDs', icon: BriefcaseBusiness },
-  { label: 'Job matching', icon: Gauge },
-  { label: 'Gmail', icon: Bell },
-  { label: 'Resume studio', icon: Sparkles },
-  { label: 'Resume history', icon: History },
+const primaryNav: { label: AdminPage; title: string; icon: typeof LayoutDashboard }[] = [
+  { label: 'Overview', title: 'Home', icon: LayoutDashboard },
+  { label: 'Candidates', title: 'Candidates', icon: UsersRound },
+  { label: 'Jobs & JDs', title: 'Jobs', icon: BriefcaseBusiness },
+  { label: 'Resume studio', title: 'Resumes', icon: FileText },
 ];
 const manageNav: {
   label: AdminPage;
   icon: typeof LayoutDashboard;
   subtitle: string;
 }[] = [
+  { label: 'Onboarding', icon: UserPlus, subtitle: 'Invites & candidate review' },
   {
     label: 'Intelligence',
     icon: BarChart3,
@@ -208,7 +207,7 @@ function Sidebar({
                 <Icon
                   className={`size-[17px] ${active ? 'text-[#a5a6ff]' : ''}`}
                 />
-                {item.label}
+                {item.title}
               </button>
             );
           })}
@@ -738,9 +737,11 @@ function OnboardingPage({ notify }: { notify: AdminPortalProps['notify'] }) {
 
 function CandidatesPage({
   previewCandidate,
+  openStudio,
   notify,
 }: {
   previewCandidate: (id: string) => void;
+  openStudio: (step?: number, jobId?: string) => void;
   notify: AdminPortalProps['notify'];
 }) {
   const { state, act } = usePlatform();
@@ -748,6 +749,7 @@ function CandidatesPage({
   const [status, setStatus] = useState('All');
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<Candidate | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(null);
   if (!state) return null;
   const records = state.candidates.filter(
     (candidate) =>
@@ -794,6 +796,26 @@ function CandidatesPage({
       );
     }
   };
+  return <>
+    <CandidateWorkspace
+      candidates={state.candidates}
+      jobs={state.jobs}
+      resumes={state.resumes}
+      selectedId={detailId}
+      onSelect={setDetailId}
+      onBack={() => setDetailId(null)}
+      onCreate={() => manage(null)}
+      onEdit={manage}
+      onPreview={previewCandidate}
+      onGenerate={(_, jobId) => openStudio(1, jobId)}
+      onArchive={(candidate) => void archive(candidate)}
+      onDelete={(candidate) => void remove(candidate)}
+    />
+    <CandidateDialog candidate={selected} open={open} setOpen={setOpen} notify={notify} />
+  </>;
+  /* Legacy list markup retained temporarily below for action parity while the
+     new workspace is validated; it is unreachable and can be removed after
+     the UI migration settles. */
   return (
     <>
       <PageHeading
@@ -3821,23 +3843,14 @@ export function AdminPortal({
         return <GmailPanel admin />;
       case 'Candidates':
         return (
-          <CandidatesPage previewCandidate={previewCandidate} notify={notify} />
+          <CandidatesPage previewCandidate={previewCandidate} openStudio={openStudio} notify={notify} />
         );
       case 'Onboarding':
         return <OnboardingPage notify={notify} />;
       case 'Jobs & JDs':
         return <JobsPage openStudio={openStudio} openMatching={openMatching} notify={notify} />;
       case 'Resume studio':
-        return (
-          <ResumeStudio
-            step={studioStep}
-            openMatching={openMatching}
-            setStep={setStudioStep}
-            jobId={studioJobId}
-            setJobId={setStudioJobId}
-            notify={notify}
-          />
-        );
+        return <ResumeWorkspace initialJobId={studioJobId} onJobChange={setStudioJobId} notify={notify} />;
       case 'Resume history':
         return <ResumeHistoryPage openStudio={openStudio} />;
       case 'Intelligence':
@@ -3850,7 +3863,7 @@ export function AdminPortal({
         return (
           <AdminOverview
             openStudio={openStudio}
-            openHistory={() => setActivePage('Resume history')}
+            openHistory={() => setActivePage('Resume studio')}
           />
         );
     }
@@ -3893,7 +3906,7 @@ export function AdminPortal({
             <div className="hidden items-center gap-2 text-sm sm:flex">
               <span className="text-[#768094]">Admin</span>
               <span className="text-[#bdc3cf]">/</span>
-              <span className="font-medium">{activePage}</span>
+              <span className="font-medium">{activePage === 'Overview' ? 'Home' : activePage === 'Jobs & JDs' ? 'Jobs' : activePage === 'Resume studio' ? 'Resumes' : activePage}</span>
             </div>
           </div>
           <div className="relative flex items-center gap-2.5">

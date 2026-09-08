@@ -182,7 +182,7 @@ function ApplicationRow({
               {job.location}
             </span>
             <span>{job.workType}</span>
-            <span>Updated {formatDate(job.updatedAt)}</span>
+            <span>{job.appliedAt ? `Applied ${formatDate(job.appliedAt)}` : `Discovered ${formatDate(job.discoveredAt)}`}</span>
             {resume && <span>Resume v{resume.version}</span>}
           </div>
         </div>
@@ -273,57 +273,35 @@ function Overview({
       {state?.settings.widgets.totals && (
         <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <CandidateMetric
-            label="Jobs found"
-            value={jobs.length}
-            note={`${jobs.filter((job) => job.status === 'Selected').length} selected`}
-            icon={BriefcaseBusiness}
-            tone="indigo"
-          />
-          <CandidateMetric
-            label="Applications"
-            value={appliedJobs.length}
+            label="Applied"
+            value={jobs.filter((job) => job.status === 'Applied').length}
             note={`${countSince(startOfMonth)} this month`}
             icon={FileCheck2}
             tone="emerald"
           />
           <CandidateMetric
-            label="Pending"
-            value={jobs.filter((job) => job.status === 'Pending').length}
-            note={`${countSince(startOfDay)} today`}
-            icon={Clock3}
-            tone="amber"
-          />
-          <CandidateMetric
             label="Interviews"
             value={jobs.filter((job) => job.status === 'Interview').length}
-            note={`${jobs.filter((job) => job.status === 'Offer').length} offers`}
+            note="Active process"
             icon={Target}
             tone="violet"
           />
+          <CandidateMetric
+            label="Offers"
+            value={jobs.filter((job) => job.status === 'Offer').length}
+            note="Latest outcomes"
+            icon={Check}
+            tone="emerald"
+          />
+          <CandidateMetric
+            label="Pending"
+            value={jobs.filter((job) => job.status === 'Pending').length}
+            note="Awaiting action"
+            icon={Clock3}
+            tone="amber"
+          />
         </section>
       )}
-      <section className="mt-5 grid gap-4 sm:grid-cols-3">
-        <div className="rounded-2xl border bg-white p-4">
-          <p className="text-[10px] uppercase tracking-[.08em] text-[#929aaa]">
-            Applied today
-          </p>
-          <p className="mt-2 text-2xl font-bold">{countSince(startOfDay)}</p>
-        </div>
-        <div className="rounded-2xl border bg-white p-4">
-          <p className="text-[10px] uppercase tracking-[.08em] text-[#929aaa]">
-            Applied this week
-          </p>
-          <p className="mt-2 text-2xl font-bold">{countSince(startOfWeek)}</p>
-        </div>
-        <div className="rounded-2xl border bg-white p-4">
-          <p className="text-[10px] uppercase tracking-[.08em] text-[#929aaa]">
-            Failed applications
-          </p>
-          <p className="mt-2 text-2xl font-bold">
-            {jobs.filter((job) => job.status === 'Failed').length}
-          </p>
-        </div>
-      </section>
       {state?.settings.widgets.recentApplications && (
         <section className="mt-6 overflow-hidden rounded-2xl border border-[#e5e9ef] bg-white">
           <div className="flex items-center justify-between border-b border-[#edf0f4] px-5 py-5 sm:px-6">
@@ -356,30 +334,10 @@ function Overview({
           )}
         </section>
       )}
-      <section className="mt-6 rounded-2xl border border-[#e5e9ef] bg-white p-5">
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-3 text-[10px]">
-          <span className="font-semibold text-[#4a5366]">Status snapshot</span>
-          {[
-            'Selected',
-            'Pending',
-            'Applied',
-            'Interview',
-            'Rejected',
-            'Offer',
-            'Failed',
-          ].map((status) => (
-            <span
-              key={status}
-              className="flex items-center gap-1.5 text-[#7b8496]"
-            >
-              <span className="portal-accent-bg size-1.5 rounded-full" />
-              {status}:{' '}
-              <b className="text-[#3f485a]">
-                {jobs.filter((job) => job.status === status).length}
-              </b>
-            </span>
-          ))}
-        </div>
+      <section className="mt-6 overflow-hidden rounded-2xl border border-[#e5e9ef] bg-white">
+        <div className="flex items-center justify-between border-b px-5 py-4"><div><h2 className="text-base font-semibold">Latest approved resumes</h2><p className="mt-1 text-xs text-[#8c95a5]">Ready to view or download</p></div></div>
+        {resumes.filter((resume) => resume.status === 'Approved').sort((a, b) => b.version - a.version).slice(0, 3).map((resume) => { const job = jobs.find((item) => item.id === resume.jobId); return <div key={resume.id} className="flex flex-col gap-3 border-b px-5 py-4 last:border-0 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-semibold">{job?.title || 'Job-specific resume'}</p><p className="mt-1 text-xs text-[#8c95a5]">{job?.company} · Version {resume.version} · {formatDate(resume.createdAt)}</p></div><button onClick={() => openJob(resume.jobId)} className="portal-accent-text text-left text-sm font-semibold">View application</button></div>; })}
+        {!resumes.some((resume) => resume.status === 'Approved') && <p className="p-5 text-sm text-[#8c95a5]">No approved resumes yet.</p>}
       </section>
     </>
   );
@@ -625,6 +583,7 @@ function JobDetail({
   downloadResume: (resume: ResumeVersion, format: 'pdf' | 'docx') => void;
 }) {
   const { state } = usePlatform();
+  const [detailTab, setDetailTab] = useState<'Overview' | 'JD' | 'Resume' | 'Timeline'>('Overview');
   const events =
     state?.events
       .filter((event) => event.jobId === job.id)
@@ -707,9 +666,35 @@ function JobDetail({
           </div>
         </div>
       </header>
+      <nav className="mt-4 flex gap-1 overflow-x-auto border-b bg-white px-2" aria-label="Application details">
+        {(['Overview', 'JD', 'Resume', 'Timeline'] as const).map((item) => <button key={item} onClick={() => setDetailTab(item)} className={`border-b-2 px-4 py-3 text-sm font-semibold ${detailTab === item ? 'portal-accent-text border-current' : 'border-transparent text-[#798294]'}`}>{item}</button>)}
+      </nav>
       <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="space-y-6">
-          {visible.fullJd && (
+        <div className={`space-y-6 ${detailTab === 'Resume' ? 'hidden' : ''}`}>
+          {detailTab === 'Overview' && (
+            <section className="rounded-2xl border bg-white p-6 sm:p-8">
+              <p className="portal-accent-text text-[10px] font-semibold uppercase tracking-[0.1em]">
+                Application overview
+              </p>
+              <h2 className="mt-1.5 text-lg font-semibold">Your application at a glance</h2>
+              <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {[
+                  ['Status', job.status],
+                  ['Match score', `${job.matchScore}%`],
+                  ['Applied', formatDate(job.appliedAt)],
+                  ['Location', job.location],
+                  ['Work type', job.workType],
+                  ['Resume', resume ? `Version ${resume.version}` : 'Not generated'],
+                ].map(([label, value]) => (
+                  <div key={label} className="rounded-xl border bg-[#fafbfc] p-4">
+                    <p className="text-[9px] font-semibold uppercase tracking-[0.08em] text-[#929aaa]">{label}</p>
+                    <p className="mt-1.5 text-[12px] font-semibold text-[#465064]">{value}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+          {detailTab === 'JD' && visible.fullJd && (
             <section className="rounded-2xl border bg-white p-6 sm:p-8">
               <div className="flex items-center justify-between">
                 <div>
@@ -734,7 +719,7 @@ function JobDetail({
               </p>
             </section>
           )}
-          <section className="rounded-2xl border bg-white p-6 sm:p-8">
+          {detailTab === 'Timeline' && <section className="rounded-2xl border bg-white p-6 sm:p-8">
             <p className="portal-accent-text text-[10px] font-semibold uppercase tracking-[0.1em]">
               Application timeline
             </p>
@@ -772,18 +757,18 @@ function JobDetail({
                 </p>
               )}
             </div>
-          </section>
-          <section className="rounded-2xl border border-dashed bg-white p-6">
+          </section>}
+          {detailTab === 'Timeline' && <section className="rounded-2xl border border-dashed bg-white p-6">
             <p className="text-xs font-semibold">Coming later</p>
             <p className="mt-2 text-[10px] leading-5 text-[#7b8496]">
               Application questions and answers, recruiter communication, and
               interview details will appear here when those future modules are
               enabled.
             </p>
-          </section>
+          </section>}
         </div>
-        <aside className="space-y-5">
-          {visible.skillProvenance && (
+        <aside className={`space-y-5 ${detailTab === 'Resume' ? 'xl:col-span-2' : ''}`}>
+          {detailTab === 'Overview' && visible.skillProvenance && (
             <section className="rounded-2xl border bg-white p-5">
               <div className="flex items-center justify-between">
                 <h2 className="text-sm font-semibold">JD requirements</h2>
@@ -798,7 +783,7 @@ function JobDetail({
               </div>
             </section>
           )}
-          {resume && (
+          {detailTab === 'Resume' && resume && (
             <section className="overflow-hidden rounded-2xl border bg-white">
               <div className="border-b bg-[#fafbfc] p-4">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#8992a3]">
@@ -847,7 +832,7 @@ function JobDetail({
               </div>
             </section>
           )}
-          <section className="rounded-2xl border bg-white p-5">
+          {detailTab === 'Overview' && <section className="rounded-2xl border bg-white p-5">
             <h2 className="text-sm font-semibold">Resume strategy</h2>
             <div className="mt-4 space-y-3.5">
               {[
@@ -869,8 +854,8 @@ function JobDetail({
                 </div>
               ))}
             </div>
-          </section>
-          <section className="rounded-2xl border bg-white p-5">
+          </section>}
+          {detailTab === 'Overview' && <section className="rounded-2xl border bg-white p-5">
             <h2 className="text-sm font-semibold">Job record</h2>
             <div className="mt-4 space-y-3">
               {[
@@ -888,7 +873,8 @@ function JobDetail({
                 </div>
               ))}
             </div>
-          </section>
+          </section>}
+          {detailTab === 'Resume' && !resume && <section className="rounded-2xl border bg-white p-5 text-sm text-[#7b8496]">No approved resume is available for this application yet.</section>}
         </aside>
       </div>
     </>
@@ -1152,7 +1138,6 @@ export function CandidatePortal({
         )}
       </header>
       <div className="mx-auto max-w-[1480px] px-4 py-5 sm:px-6 sm:py-6">
-        {page === 'Overview' && !selectedJob && !exitPreview && <GmailPanel candidateId={candidate.id} />}
         {selectedJob ? (
           <JobDetail
             job={selectedJob}
