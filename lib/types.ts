@@ -13,6 +13,7 @@ export type CandidateSkill = {
 };
 
 export type Candidate = {
+  career?: import('./career').Career;
   matchPreferences?: import('./matching').CandidatePreferences;
   id: string;
   email: string;
@@ -78,6 +79,8 @@ export type SkillPlanItem = {
 };
 
 export type ResumeContent = {
+  certifications?: string[];
+  projects?: string[];
   name: string;
   headline: string;
   contact: string;

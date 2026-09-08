@@ -20,6 +20,7 @@ import { DEFAULT_SETTINGS } from './default-settings';
 import { firebaseApp } from './firebase';
 import { evaluateReleaseHealth } from './release-health';
 import { hydrateJob } from './matching-store';
+import { careerSchema, careerContent, emptyCareer } from './career';
 import { provisionGmail } from './gmail-service';
 import { evaluateMatch, preferences, type CatalogJob } from './matching';
 import {
@@ -626,6 +627,7 @@ export async function runFirebaseAction(
       phone: String(payload.phone ?? ''),
       headline: String(payload.headline ?? ''),
       summary: String(payload.summary ?? ''),
+      career: careerSchema.parse(payload.career ?? emptyCareer()),
       location: String(payload.location ?? ''),
       family: required(payload, 'family'),
       status: 'Active',
@@ -661,6 +663,7 @@ export async function runFirebaseAction(
       phone: String(payload.phone ?? ''),
       headline: String(payload.headline ?? ''),
       summary: String(payload.summary ?? ''),
+      career: careerSchema.parse(payload.career ?? current.career ?? emptyCareer()),
       location: String(payload.location ?? ''),
       family: required(payload, 'family'),
       status: String(payload.status ?? current.status) as Candidate['status'],
@@ -997,14 +1000,13 @@ export async function runFirebaseAction(
         contact: [candidate.email, candidate.phone, candidate.location]
           .filter(Boolean)
           .join(' · '),
-        summary: generatedSummary ?? candidate.summary,
+        summary: generatedSummary ?? (candidate.summary || (candidate.career?.experience ?? []).map(e => `${e.title} at ${e.company}`).join('; ')),
         skills: verifiedSkills.length
           ? verifiedSkills
           : candidate.skills
               .filter((item) => item.source === 'Profile')
               .map((item) => item.name),
-        experience: [],
-        education: [],
+        ...careerContent(candidate.career),
       },
       skillPlan: plan,
       scores: {

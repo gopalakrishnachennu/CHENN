@@ -52,6 +52,8 @@ import {
 import { ResumePaper } from '@/components/resume-paper';
 import { JobMatching } from './job-matching';
 import { GmailPanel } from './gmail-panel';
+import { CareerEditor } from './career-editor';
+import { emptyCareer } from '@/lib/career';
 import { usePlatform } from '@/lib/platform-context';
 import { portalThemeStyle } from '@/lib/portal-theme';
 import { evaluateReleaseHealth } from '@/lib/release-health';
@@ -535,6 +537,7 @@ type CandidateDraft = Pick<
   | 'family'
   | 'status'
   | 'portalEnabled'
+  | 'career'
 >;
 const emptyCandidate = (): CandidateDraft => ({
   id: '',
@@ -548,6 +551,7 @@ const emptyCandidate = (): CandidateDraft => ({
   family: 'DevOps',
   status: 'Active',
   portalEnabled: true,
+  career: emptyCareer(),
 });
 
 function CandidateDialog({
@@ -580,6 +584,7 @@ function CandidateDialog({
       family: value.family,
       status: value.status,
       portalEnabled: value.portalEnabled,
+      career: value.career ?? emptyCareer(),
     });
     setSkillsText(
       candidate?.skills
@@ -714,7 +719,7 @@ function CandidateDialog({
             </label>
             <label className="wide-row space-y-1.5 sm:col-span-2">
               <span className="text-xs font-semibold text-[#485164]">
-                Profile summary
+                Profile summary (optional; generated later from career history)
               </span>
               <textarea
                 value={draft.summary}
@@ -722,6 +727,7 @@ function CandidateDialog({
                 className="min-h-24 w-full rounded-xl border border-[#dfe3ea] px-3.5 py-3 text-sm"
               />
             </label>
+            <CareerEditor value={draft.career ?? emptyCareer()} onChange={career => setDraft(current => ({ ...current, career }))} />
             <label className="wide-row space-y-1.5 sm:col-span-2">
               <span className="text-xs font-semibold text-[#485164]">
                 Skills — one per line: Skill | years | level | evidence

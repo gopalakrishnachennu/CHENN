@@ -321,6 +321,9 @@ async function makePdf(content: ResumeContent) {
     heading('Education');
     for (const item of content.education) line(item, 9, regular, muted);
   }
+  for (const section of ['certifications', 'projects'] as const) {
+    if (content[section]?.length) { heading(section === 'projects' ? 'Projects' : 'Certifications'); for (const item of content[section]!) block(item); }
+  }
   return document.save();
 }
 
@@ -380,6 +383,9 @@ async function makeDocx(content: ResumeContent) {
     children.push(
       ...content.education.map((item) => new Paragraph({ text: item })),
     );
+  }
+  for (const section of ['certifications', 'projects'] as const) {
+    if (content[section]?.length) children.push(new Paragraph({ text: section.toUpperCase(), heading: HeadingLevel.HEADING_1 }), ...content[section]!.map(text => new Paragraph({ text })));
   }
   return Packer.toBlob(new Document({ sections: [{ children }] }));
 }

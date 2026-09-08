@@ -42,6 +42,7 @@ export function ResumePaper({ content }: { content: ResumeContent }) {
           {content.education.map((item) => <p key={item} className="resume-copy">{item}</p>)}
         </section>
       )}
+      {(['certifications', 'projects'] as const).map(section => content[section]?.length ? <section key={section} className="mt-5"><h2 className="resume-heading">{section.toUpperCase()}</h2>{content[section]!.map((item, i) => <p key={i} className="resume-copy">{item}</p>)}</section> : null)}
     </article>
   );
 }
