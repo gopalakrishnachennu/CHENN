@@ -3,7 +3,8 @@ import type { User } from 'firebase/auth';
 import { firebaseApp } from './firebase';
 import { ADMIN_EMAIL } from './constants';
 import { catalogId, evaluateMatch, normalizeJob, preferences, type CatalogJob, type JobMatch } from './matching';
-import type { Candidate } from './types';
+import { classifyJobFamily } from './jd-intelligence';
+import type { Candidate, JobFamily } from './types';
 
 const db = getFirestore(firebaseApp, 'chenn');
 async function readMatchingDataRaw() {
@@ -42,9 +43,16 @@ function requireAdmin(user: User) {
 export async function importCatalog(user: User, rows: Record<string, unknown>[]) {
   requireAdmin(user);
   if (!rows.length || rows.length > 100) throw new Error('Import between 1 and 100 jobs.');
-  const families = (await getDocs(collection(db, 'families'))).docs.filter(d => d.data().active).map(d => d.data().name);
+  const families = (await getDocs(collection(db, 'families'))).docs.map(d => ({ ...d.data(), id: d.id }) as JobFamily).filter(family => family.active);
+  const familyNames = families.map(family => family.name);
   const normalized = await Promise.all(rows.map(async (row, index) => {
-    try { const job = normalizeJob(row); if (!families.includes(job.family)) throw new Error('Choose an active family.'); return { ...job, id: await catalogId(job) }; }
+    try {
+      const classified = row.family ? null : classifyJobFamily(row, families);
+      if (classified && classified.confidence < 80) throw new Error('Job family could not be classified confidently. Choose a family before import.');
+      const job = normalizeJob({ ...row, ...(classified ? { family: classified.family, familyConfidence: classified.confidence } : {}) });
+      if (!familyNames.includes(job.family)) throw new Error('Choose an active family.');
+      return { ...job, id: await catalogId(job) };
+    }
     catch (error) { throw new Error(`Row ${index + 1}: ${(error as Error).message}`); }
   }));
   let added = 0;

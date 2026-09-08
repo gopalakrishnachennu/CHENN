@@ -1,8 +1,13 @@
 import type { ResumeContent } from '@/lib/types';
 
-export function ResumePaper({ content }: { content: ResumeContent }) {
+export function ResumePaper({ content, template = 'Modern ATS' }: { content: ResumeContent; template?: string }) {
+  const templateClass = template.toLowerCase().includes('classic')
+    ? 'resume-paper--classic'
+    : template.toLowerCase().includes('executive')
+      ? 'resume-paper--executive'
+      : 'resume-paper--modern';
   return (
-    <article className="mx-auto min-h-[780px] w-full max-w-[720px] bg-white px-[7%] py-[7%] text-[#263044] shadow-[0_10px_32px_rgba(31,40,59,.12)]">
+    <article data-template={template} className={`resume-paper mx-auto min-h-[780px] w-full max-w-[720px] bg-white px-[7%] py-[7%] text-[#263044] shadow-[0_10px_32px_rgba(31,40,59,.12)] ${templateClass}`}>
       <header className="border-b-2 border-[#303a4d] pb-4 text-center">
         <h1 className="text-[clamp(19px,3vw,29px)] font-bold uppercase tracking-[.08em]">{content.name}</h1>
         <p className="mt-1 text-[clamp(9px,1.4vw,12px)] font-semibold text-[#5557c7]">{content.headline}</p>

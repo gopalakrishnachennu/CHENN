@@ -1,4 +1,6 @@
 import type { Candidate } from './types';
+import type { StructuredJobRequirements } from './jd-intelligence';
+import { extractStructuredRequirements } from './jd-intelligence';
 
 export type CandidatePreferences = {
   secondaryFamilies: string[]; targetRoles: string[]; locations: string[];
@@ -13,6 +15,7 @@ export type CatalogJob = {
   location: string; workType: string; authorization: string; salaryMax: number | null;
   currency: string; source: string; sourceUrl: string; jdText: string;
   status: 'Open' | 'Closed'; expiresAt: string; createdAt: string; updatedAt: string;
+  requirements?: StructuredJobRequirements;
 };
 export type JobMatch = {
   id: string; jobId: string; candidateId: string; eligibility: 'Eligible' | 'Review' | 'Ineligible';
@@ -55,10 +58,13 @@ export function normalizeJob(input: Record<string, unknown>, now = new Date().to
   const expiresAt = textValue(input.expiresAt, new Date(Date.parse(now) + 30 * 86400000).toISOString());
   if (!Number.isFinite(Date.parse(expiresAt))) throw new Error('Invalid expiry date.');
   const title = required('title');
+  const jdText = required('jdText');
+  const requirements = extractStructuredRequirements(jdText);
   return { company: required('company'), title, family: required('family'), role: textValue(input.role, title),
     familyConfidence: number(input.familyConfidence, 100, 0, 100)!, mandatorySkills: splitValues(input.mandatorySkills), preferredSkills: splitValues(input.preferredSkills), criticalSkills: splitValues(input.criticalSkills),
     seniority: textValue(input.seniority), minimumYears: number(input.minimumYears, null, 0, 70), location: required('location'), workType: required('workType'), authorization: textValue(input.authorization),
-    salaryMax: number(input.salaryMax, null), currency: textValue(input.currency, 'USD').toUpperCase(), source: textValue(input.source, 'Manual'), sourceUrl, jdText: required('jdText'), status: input.status === 'Closed' ? 'Closed' : 'Open',
+    salaryMax: number(input.salaryMax, null), currency: textValue(input.currency, 'USD').toUpperCase(), source: textValue(input.source, 'Manual'), sourceUrl, jdText, requirements,
+    status: input.status === 'Closed' ? 'Closed' : 'Open',
     expiresAt: new Date(expiresAt).toISOString(), createdAt: textValue(input.createdAt, now), updatedAt: now };
 }
 export async function catalogId(job: Pick<CatalogJob, 'company' | 'title' | 'location'>) {
@@ -89,12 +95,19 @@ export function evaluateMatch(job: CatalogJob, candidate: Candidate, at = new Da
     if (job.salaryMax == null || job.currency !== p.currency) uncertain.push('Salary needs confirmation.');
     else if (job.salaryMax < p.minimumSalary) blocked.push('Salary is below candidate minimum.');
   }
-  const verified = (candidate.skills ?? []).filter(x => x.source === 'Profile' && x.evidence.trim()).map(x => canonical(x.name));
+  const verified = (candidate.skills ?? []).filter(x => ['Profile', 'Career'].includes(x.source) && x.evidence.trim()).map(x => canonical(x.name));
   const missing = [...new Set([...job.mandatorySkills, ...job.criticalSkills])].filter(x => !verified.includes(canonical(x)));
   if (job.criticalSkills.some(x => !verified.includes(canonical(x)))) blocked.push('Missing a critical mandatory skill.');
   else if (missing.length) uncertain.push('Mandatory skills require evidence review.');
   const ratio = (list: string[]) => list.length ? list.filter(x => verified.includes(canonical(x))).length / list.length * 100 : 100;
   if (!job.mandatorySkills.length && !job.preferredSkills.length) uncertain.push('JD skill requirements need review.');
+  const requirements = job.requirements;
+  if (requirements?.education.length && !(candidate.career?.education.length))
+    uncertain.push('Education requirement needs confirmation.');
+  if (requirements?.certifications.length && !(candidate.career?.certifications.length))
+    uncertain.push('Certification requirement needs confirmation.');
+  if (requirements?.clearance) uncertain.push('Security clearance needs confirmation.');
+  if (requirements?.travel) uncertain.push('Travel requirement needs confirmation.');
   const scores = { skills: Math.round(ratio(job.mandatorySkills) * .8 + ratio(job.preferredSkills) * .2),
     role: inList(p.targetRoles, job.role) ? 100 : 40,
     location: inList(p.locations, job.location) || inList(p.locations, 'Any') ? 100 : 0,

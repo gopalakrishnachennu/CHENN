@@ -20,7 +20,13 @@ import { DEFAULT_SETTINGS } from './default-settings';
 import { firebaseApp } from './firebase';
 import { evaluateReleaseHealth } from './release-health';
 import { hydrateJob } from './matching-store';
-import { careerSchema, careerContent, emptyCareer } from './career';
+import { careerSchema, emptyCareer } from './career';
+import {
+  careerEvidence,
+  deriveCandidateSkills,
+  groundedResumeContent,
+  validateGrounding,
+} from './evidence';
 import { provisionGmail } from './gmail-service';
 import { evaluateMatch, preferences, type CatalogJob } from './matching';
 import {
@@ -558,17 +564,25 @@ async function removeDocuments(
   return snapshot.docs.map((item) => item.data());
 }
 
-async function openAISummary(candidate: Candidate, job: Job, model: string) {
+async function sha256(value: unknown) {
+  const bytes = new TextEncoder().encode(JSON.stringify(value));
+  return [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
+    .map((item) => item.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+async function openAISummary(
+  candidate: Candidate,
+  job: Job,
+  model: string,
+  prompt: string,
+) {
   if (typeof window === 'undefined') return null;
   const key = window.localStorage.getItem(openAIKeyName);
   if (!key) return null;
-  const evidence = [
-    candidate.summary,
-    candidate.baseResume?.extractedText ?? '',
-  ]
-    .filter(Boolean)
-    .join('\n')
-    .slice(0, 12_000);
+  const units = careerEvidence(candidate.career).slice(0, 100);
+  const evidence = JSON.stringify(units).slice(0, 30_000);
+  if (!units.length) return null;
   try {
     const response = await fetch('https://api.openai.com/v1/responses', {
       method: 'POST',
@@ -578,7 +592,28 @@ async function openAISummary(candidate: Candidate, job: Job, model: string) {
       },
       body: JSON.stringify({
         model,
-        input: `Write one concise professional resume summary for the target role. Use only facts explicitly present in the evidence. Do not add employers, years, metrics, credentials, or skills.\n\nTARGET ROLE:\n${job.targetRole}\n\nJOB DESCRIPTION:\n${job.jdText.slice(0, 8_000)}\n\nCANDIDATE EVIDENCE:\n${evidence}`,
+        instructions: `${prompt}\nSelect the source IDs that best support the target role. Never invent, infer, or rewrite facts.`,
+        input: `TARGET ROLE:\n${job.targetRole}\n\nJOB DESCRIPTION:\n${job.jdText.slice(0, 10_000)}\n\nVERIFIED CANDIDATE EVIDENCE:\n${evidence}`,
+        text: {
+          format: {
+            type: 'json_schema',
+            name: 'grounded_resume_summary',
+            strict: true,
+            schema: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                sourceRefs: {
+                  type: 'array',
+                  minItems: 1,
+                  maxItems: 3,
+                  items: { type: 'string', enum: units.map((unit) => unit.id) },
+                },
+              },
+              required: ['sourceRefs'],
+            },
+          },
+        },
         max_output_tokens: 180,
       }),
     });
@@ -592,7 +627,17 @@ async function openAISummary(candidate: Candidate, job: Job, model: string) {
       payload.output
         ?.flatMap((item) => item.content ?? [])
         .find((item) => item.type === 'output_text')?.text;
-    return text?.trim() || null;
+    if (!text) return null;
+    const parsed = JSON.parse(text) as { sourceRefs?: string[] };
+    const selected = (parsed.sourceRefs ?? [])
+      .map((ref) => units.find((unit) => unit.id === ref))
+      .filter((unit): unit is NonNullable<typeof unit> => Boolean(unit));
+    return selected.length
+      ? {
+          summary: selected.map((unit) => unit.text).join(' '),
+          units: selected,
+        }
+      : null;
   } catch {
     return null;
   }
@@ -619,6 +664,10 @@ export async function runFirebaseAction(
     if (duplicate.length)
       throw new Error('A candidate with that email already exists.');
     const id = crypto.randomUUID();
+    const career = careerSchema.parse(payload.career ?? emptyCareer());
+    const familyName = required(payload, 'family');
+    const family = await familyByName(familyName);
+    if (!family) throw new Error('Choose an active job family.');
     const candidate = candidateShape({
       id,
       email,
@@ -627,12 +676,12 @@ export async function runFirebaseAction(
       phone: String(payload.phone ?? ''),
       headline: String(payload.headline ?? ''),
       summary: String(payload.summary ?? ''),
-      career: careerSchema.parse(payload.career ?? emptyCareer()),
+      career,
       location: String(payload.location ?? ''),
-      family: required(payload, 'family'),
+      family: familyName,
       status: 'Active',
       portalEnabled: payload.portalEnabled !== false,
-      skills: [],
+      skills: deriveCandidateSkills(career, family.skills),
       createdAt: timestamp,
       updatedAt: timestamp,
     });
@@ -654,6 +703,10 @@ export async function runFirebaseAction(
     if (String(payload.email).toLowerCase() !== current.email || payload.portalEnabled === false || payload.status === 'Archived') {
       await provisionGmail(user, (await mergedSettings()).gmailServiceUrl, id, current.email, false);
     }
+    const career = careerSchema.parse(payload.career ?? current.career ?? emptyCareer());
+    const familyName = required(payload, 'family');
+    const family = await familyByName(familyName);
+    if (!family) throw new Error('Choose an active job family.');
     const candidate = candidateShape({
       ...current,
       id,
@@ -663,12 +716,12 @@ export async function runFirebaseAction(
       phone: String(payload.phone ?? ''),
       headline: String(payload.headline ?? ''),
       summary: String(payload.summary ?? ''),
-      career: careerSchema.parse(payload.career ?? current.career ?? emptyCareer()),
+      career,
       location: String(payload.location ?? ''),
-      family: required(payload, 'family'),
+      family: familyName,
       status: String(payload.status ?? current.status) as Candidate['status'],
       portalEnabled: payload.portalEnabled !== false,
-      skills: current.skills ?? [],
+      skills: deriveCandidateSkills(career, family.skills, current.skills ?? []),
       createdAt: current.createdAt,
       updatedAt: timestamp,
     });
@@ -983,41 +1036,91 @@ export async function runFirebaseAction(
     const verifiedSkills = plan
       .filter((item) => item.source === 'Profile')
       .map((item) => item.name);
+    const activePrompt = (await listDocuments<Prompt>('prompts'))
+      .filter((item) => item.active)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+    const model = settings.system.openAIModel;
     const generatedSummary = await openAISummary(
       candidate,
       job,
-      settings.system.openAIModel,
+      model,
+      activePrompt?.template ??
+        'Create a grounded, JD-first resume using only verified candidate evidence.',
     );
+    const fallbackUnits = careerEvidence(candidate.career)
+      .filter((unit) => unit.kind === 'experience' || unit.kind === 'project')
+      .slice(0, 3);
+    const summaryUnits = generatedSummary?.units ?? fallbackUnits;
+    const summary = summaryUnits.length
+      ? summaryUnits.map((unit) => unit.text).join(' ')
+      : `Target role: ${job.targetRole || job.title}.`;
+    const grounded = groundedResumeContent(
+      candidate,
+      job,
+      verifiedSkills,
+      summary,
+    );
+    const summaryEvidence = summaryUnits.map((unit, index) => ({
+      claimId: `summary:${index}`,
+      section: 'summary' as const,
+      outputText: unit.text,
+      sourceRef: unit.id,
+      sourceText: unit.text,
+    }));
+    const evidenceMap = [...summaryEvidence, ...grounded.evidenceMap];
+    const validation = validateGrounding(grounded.content, evidenceMap);
+    if (!validation.passed)
+      throw new Error(`Resume grounding failed: ${validation.errors.join('; ')}`);
+    const template = String(payload.template ?? 'Modern ATS');
+    const inputHash = await sha256({
+      candidate,
+      job,
+      prompt: activePrompt,
+      model,
+      template,
+      policyVersion: 'family-eligibility-v2',
+    });
     const resume: ResumeVersion & { candidateVisible: boolean } = {
       id,
       candidateId: candidate.id,
       jobId,
       parentId: existing.sort((a, b) => b.version - a.version)[0]?.id ?? null,
       version,
-      content: {
-        name: candidate.name,
-        headline: job.targetRole || job.title,
-        contact: [candidate.email, candidate.phone, candidate.location]
-          .filter(Boolean)
-          .join(' · '),
-        summary: generatedSummary ?? (candidate.summary || (candidate.career?.experience ?? []).map(e => `${e.title} at ${e.company}`).join('; ')),
-        skills: verifiedSkills.length
-          ? verifiedSkills
-          : candidate.skills
-              .filter((item) => item.source === 'Profile')
-              .map((item) => item.name),
-        ...careerContent(candidate.career),
-      },
+      content: grounded.content,
       skillPlan: plan,
       scores: {
         jdMatch: calculateMatch(plan),
-        ats: Math.min(100, 76 + Math.round(verifiedSkills.length * 2.5)),
-        recruiterSafe: 100,
-        evidence: 100,
+        ats: Math.min(
+          100,
+          70 +
+            Math.round(verifiedSkills.length * 2) +
+            Math.min(10, grounded.content.experience.length * 2),
+        ),
+        recruiterSafe: validation.errors.length ? 0 : 100,
+        evidence: evidenceMap.length
+          ? Math.round(
+              (evidenceMap.filter((item) => item.sourceText).length /
+                evidenceMap.length) *
+                100,
+            )
+          : 0,
       },
-      template: String(payload.template ?? 'Modern ATS'),
+      template,
       status: 'Ready for review',
       engine: generatedSummary ? 'openai-evidence-safe' : 'evidence-safe',
+      evidenceMap,
+      validation,
+      generationSnapshot: {
+        candidateUpdatedAt: candidate.updatedAt,
+        jobUpdatedAt: job.updatedAt,
+        catalogId: job.catalogId,
+        matchPolicyVersion: 'family-eligibility-v2',
+        promptId: activePrompt?.id,
+        promptVersion: activePrompt?.version,
+        model,
+        template,
+        inputHash,
+      },
       createdAt: timestamp,
       approvedAt: null,
       candidateVisible: false,
@@ -1056,6 +1159,11 @@ export async function runFirebaseAction(
     const parentSnapshot = await getDoc(doc(firebaseDb, 'resumes', parentId));
     if (!parentSnapshot.exists()) throw new Error('Resume not found.');
     const parent = parentSnapshot.data() as ResumeVersion;
+    const validation = parent.evidenceMap?.length
+      ? validateGrounding(content, parent.evidenceMap)
+      : undefined;
+    if (validation && !validation.passed)
+      throw new Error(`Resume edit contains unsupported claims: ${validation.errors.join('; ')}`);
     const versions = await listDocuments<ResumeVersion>('resumes', [
       where('jobId', '==', parent.jobId),
     ]);
@@ -1067,6 +1175,8 @@ export async function runFirebaseAction(
       parentId,
       version,
       content,
+      evidenceMap: parent.evidenceMap ?? [],
+      validation: validation ?? parent.validation,
       status: 'Ready for review',
       engine: 'admin-edit',
       createdAt: timestamp,

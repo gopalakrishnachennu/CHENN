@@ -9,7 +9,35 @@ export type CandidateSkill = {
   proficiency: string;
   years: number;
   evidence: string;
+  evidenceRefs?: string[];
   source: string;
+};
+
+export type ClaimEvidence = {
+  claimId: string;
+  section: 'summary' | 'experience' | 'projects' | 'skills';
+  outputText: string;
+  sourceRef: string;
+  sourceText: string;
+};
+
+export type GenerationSnapshot = {
+  candidateUpdatedAt: string;
+  jobUpdatedAt: string;
+  catalogId?: string;
+  matchPolicyVersion: string;
+  promptId?: string;
+  promptVersion?: number;
+  model: string;
+  template: string;
+  inputHash: string;
+};
+
+export type ResumeValidation = {
+  passed: boolean;
+  errors: string[];
+  warnings: string[];
+  claimCount: number;
 };
 
 export type Candidate = {
@@ -108,6 +136,9 @@ export type ResumeVersion = {
   template: string;
   status: ResumeStatus;
   engine: string;
+  evidenceMap?: ClaimEvidence[];
+  generationSnapshot?: GenerationSnapshot;
+  validation?: ResumeValidation;
   createdAt: string;
   approvedAt: string | null;
 };

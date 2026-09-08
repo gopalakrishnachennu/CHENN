@@ -59,7 +59,11 @@ export function buildSkillPlan(
   preferred: string[],
   options: { allowFamilyContext?: boolean; allowSupportingContext?: boolean } = {},
 ): SkillPlanItem[] {
-  const profile = new Map(candidateSkills.map((skill) => [normalizeSkill(skill.name), skill]));
+  const profile = new Map(
+    candidateSkills
+      .filter((skill) => ['Profile', 'Career'].includes(skill.source) && skill.evidence.trim())
+      .map((skill) => [normalizeSkill(skill.name), skill]),
+  );
   const familySkills = new Set((family?.skills ?? []).map(normalizeSkill));
   const rows = [
     ...mandatory.map((name) => ({ name, required: true })),

@@ -941,7 +941,7 @@ function ResumeDialog({
           )}
         </DialogHeader>
         <div className="overflow-y-auto bg-[#e7eaef] p-5 sm:p-8">
-          {resume && <ResumePaper content={resume.content} />}
+          {resume && <ResumePaper content={resume.content} template={resume.template} />}
         </div>
       </DialogContent>
     </Dialog>

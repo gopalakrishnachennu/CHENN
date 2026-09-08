@@ -475,6 +475,23 @@
   font-weight: 800;
   letter-spacing: 0.09em;
 }
+.resume-paper--classic {
+  font-family: Georgia, 'Times New Roman', serif;
+}
+.resume-paper--classic header {
+  border-bottom-width: 1px;
+  text-align: left;
+}
+.resume-paper--classic .resume-heading {
+  border-bottom-color: #263044;
+  text-align: left;
+}
+.resume-paper--executive {
+  border-top: 8px solid #5557c7;
+}
+.resume-paper--executive header {
+  border-bottom-color: #5557c7;
+}
 .resume-copy {
   margin-top: 7px;
   font-size: clamp(6px, 0.72vw, 8.5px);

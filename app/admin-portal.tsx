@@ -1553,8 +1553,8 @@ function ResumeStudio({
                 className="flex flex-1 items-center last:flex-none"
               >
                 <button
-                  disabled={number > step || (number > 2 && !jobId)}
-                  onClick={() => setStep(number)}
+                  disabled={number === 2 || number > step || (number > 2 && !jobId)}
+                  onClick={() => number !== 2 && setStep(number)}
                   className="flex items-center gap-2.5"
                 >
                   <span
@@ -1584,36 +1584,40 @@ function ResumeStudio({
             Step 1 of 5
           </p>
           <h2 className="mt-2 text-xl font-semibold">
-            Who is this resume for?
+            Choose an approved job match
           </h2>
           <p className="mt-1 text-sm text-[#858e9f]">
-            Choose the candidate whose verified profile and approved family will
-            be used.
+            Resume generation starts only after a shared JD has been matched and
+            approved for a candidate in Job matching.
           </p>
           <div className="mt-7 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {state.candidates.map((item) => (
+            {state.jobs.filter((item) => Boolean(item.catalogId)).map((item) => {
+              const matchedCandidate = state.candidates.find((candidateItem) => candidateItem.id === item.candidateId);
+              return (
               <button
                 key={item.id}
                 onClick={() => {
-                  setCandidateId(item.id);
-                  setDraft(emptyJob(item));
+                  setJobId(item.id);
+                  setCandidateId(item.candidateId);
+                  setDraft(draftFromJob(item));
+                  setStep(3);
                 }}
-                className={`flex items-center gap-3 rounded-2xl border p-4 text-left ${candidateId === item.id ? 'border-[#696be6] bg-[#f7f7ff] ring-3 ring-[#696be6]/8' : 'border-[#e5e8ee]'}`}
+                className="flex items-center gap-3 rounded-2xl border border-[#e5e8ee] p-4 text-left"
               >
-                <div className="avatar avatar--violet">{item.initials}</div>
+                <div className="avatar avatar--violet">{matchedCandidate?.initials ?? 'JD'}</div>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[13px] font-semibold">
-                    {item.name}
+                    {item.company} · {item.title}
                   </p>
                   <p className="mt-0.5 text-[11px] text-[#929aaa]">
-                    {item.family} · {item.location}
+                    {matchedCandidate?.name ?? 'Candidate'} · {item.family} · {item.status}
                   </p>
                 </div>
-                {candidateId === item.id && (
-                  <CheckCircle2 className="size-5 text-[#5b5de4]" />
-                )}
+                <ArrowRight className="size-4 text-[#5b5de4]" />
               </button>
-            ))}
+              );
+            })}
+            {!state.jobs.some((item) => item.catalogId) && <Empty icon={FileText} title="No approved matches yet" detail="Approve a candidate match in Job matching first." />}
           </div>
         </section>
       )}
@@ -1931,7 +1935,7 @@ function ResumeStudio({
                   </div>
                 </div>
                 <div className="max-h-[780px] overflow-y-auto p-4 sm:p-7">
-                  <ResumePaper content={resume.content} />
+                  <ResumePaper content={resume.content} template={resume.template} />
                 </div>
               </section>
               <aside className="space-y-4">
@@ -2011,19 +2015,11 @@ function ResumeStudio({
         <Button
           variant="outline"
           disabled={step === 1 || busy}
-          onClick={() => setStep(Math.max(1, step - 1))}
+          onClick={() => setStep(step === 3 ? 1 : Math.max(1, step - 1))}
         >
           <ArrowLeft className="size-4" /> Back
         </Button>
-        {step === 1 && (
-          <Button
-            disabled={!candidateId}
-            onClick={() => setStep(2)}
-            className="bg-[#5b5de4]"
-          >
-            Continue <ArrowRight className="size-4" />
-          </Button>
-        )}
+        {step === 1 && <Button variant="outline" onClick={openMatching}>Open Job matching</Button>}
         {step === 2 && (
           <Button
             disabled={!draft.company || !draft.title || !draft.jdText || busy}
