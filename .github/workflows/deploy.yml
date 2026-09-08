@@ -1,12 +1,8 @@
 name: Deploy Firebase
 on:
+  push:
+    branches: [prod]
   workflow_dispatch:
-    inputs:
-      live_qa_approved:
-        description: 'I verified authenticated workflows and candidate isolation for this exact revision'
-        type: boolean
-        required: true
-        default: false
 permissions:
   contents: read
   deployments: write
@@ -15,15 +11,12 @@ concurrency:
   cancel-in-progress: false
 jobs:
   deploy:
+    if: github.ref == 'refs/heads/prod'
     environment:
       name: production
       url: https://chenn.web.app
     runs-on: ubuntu-latest
     steps:
-      - name: Require live acceptance
-        env:
-          APPROVED: ${{ inputs.live_qa_approved }}
-        run: test "$APPROVED" = true
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
@@ -43,7 +36,7 @@ jobs:
             const result = await github.rest.repos.createDeployment({
               ...context.repo, ref: context.sha, environment: 'production',
               auto_merge: false, required_contexts: [], production_environment: true,
-              description: 'Tests and live acceptance required; Firebase portal only'
+              description: 'Production branch release; automated checks required'
             });
             core.setOutput('id', result.data.id);
             await github.rest.repos.createDeploymentStatus({
@@ -59,7 +52,6 @@ jobs:
       - name: Test, deploy and verify exact revision
         env:
           DEPLOYMENT_ID: ${{ steps.deployment.outputs.id }}
-          LIVE_QA_APPROVED: ${{ inputs.live_qa_approved }}
         run: npm run deploy:firebase
       - name: Preserve release evidence
         if: always()

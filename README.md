@@ -32,9 +32,9 @@ UI flows and external integrations also need acceptance testing.
 
 The public deployment is [https://chenn.web.app](https://chenn.web.app). Opening the site does not require ChatGPT or a ChatGPT login. Google Authentication protects private portal records; Firestore and Storage rules give `gopalakrishnachennu@gmail.com` administrator access and restrict candidates to their own read-only data.
 
-Pushes run automated checks but never deploy automatically. Use the GitHub
-**Deploy Firebase** workflow after live acceptance. The local deployment command
-refuses untracked releases. See [Release process](deployment/RELEASE-PROCESS.md)
+Pushes to `main` run checks. Pushes to `prod` automatically run checks, deploy to
+Firebase, and verify the published commit. Failed checks block deployment.
+The local deployment command refuses untracked releases. See [Release process](deployment/RELEASE-PROCESS.md)
 for credentials, approvals, audit history and rollback instructions.
 
 Gmail is implemented locally but not activated or released. Its deployment is paused

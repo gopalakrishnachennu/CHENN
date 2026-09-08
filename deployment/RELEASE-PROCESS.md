@@ -1,5 +1,15 @@
 # Traceable releases
 
+## Current pipeline (supersedes the manual approval instructions below)
+
+`main` → development and CI. `prod` → automated tests → Firebase deployment → live commit verification.
+
+Push the tested revision to `prod` to publish. No live-QA checkbox is required or fabricated. Failed tests/authentication/deployment/verification make the run fail. The workflow can also be rerun manually on `prod` only. Every deployment retains its commit, run link, result and previous release information. Gmail is excluded.
+
+One-time prerequisite: configure `FIREBASE_SERVICE_ACCOUNT` in GitHub Actions secrets. This credential is currently missing; source pushes alone cannot authenticate Firebase. Until configured, automatic deployment will fail visibly and the previous website stays live.
+
+For rollback, revert the unwanted changes on `prod` and push the revert. The same checks and deployment tracking apply. Database data is not rolled back by this operation.
+
 Source of truth: https://github.com/gopalakrishnachennu/CHENN
 
 ## Source versus production

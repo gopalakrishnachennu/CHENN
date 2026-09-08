@@ -2,9 +2,9 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 
-// Only the manually approved GitHub workflow deploys. Local builds remain available.
-if (process.env.GITHUB_ACTIONS !== 'true' || !process.env.DEPLOYMENT_ID || process.env.LIVE_QA_APPROVED !== 'true') {
-  throw new Error('Use the Deploy Firebase workflow with recorded live QA approval. No deployment was attempted.');
+// Production pushes authorize releases; automated checks must still pass.
+if (process.env.GITHUB_ACTIONS !== 'true' || !process.env.DEPLOYMENT_ID || process.env.GITHUB_REF !== 'refs/heads/prod') {
+  throw new Error('Deploy through the prod branch workflow. No deployment was attempted.');
 }
 const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim();
 if (git('status', '--porcelain')) throw new Error('Deployment requires a clean checkout.');
@@ -38,7 +38,7 @@ try {
   } else throw new Error('Unrecognized previous release response.');
   run('npm', ['run', 'release:check']);
   record.checks.automated = 'passed';
-  record.checks.liveQA = { approvedBy: process.env.GITHUB_ACTOR, approved: true };
+  record.trigger = { event: process.env.GITHUB_EVENT_NAME, branch: 'prod' };
   record.lockfileSha256 = createHash('sha256').update(readFileSync('package-lock.json')).digest('hex');
   const publicRelease = { commit, deploymentId: record.deploymentId, builtAt: new Date().toISOString(), workflow: record.workflow };
   writeFileSync('firebase-dist/release.json', JSON.stringify(publicRelease, null, 2));
