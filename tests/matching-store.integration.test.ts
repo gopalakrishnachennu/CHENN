@@ -22,7 +22,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('Matching transactions', (
   beforeEach(async () => {
     await environment.clearFirestore();
     await setDoc(doc(holder.database, 'families', 'devops'), { name: 'DevOps', active: true });
-    for (const id of ['a', 'b']) await setDoc(doc(holder.database, 'candidates', id), { id, name: id, family: 'DevOps', email: `${id}@example.com`, portalEnabled: true, status: 'Active', skills: [{ name: 'AWS', source: 'Profile', evidence: 'Verified work' }], matchPreferences: preferences({ targetRoles: ['Engineer'], locations: ['Remote'], workTypes: ['Remote'], authorizations: ['US authorized'], seniorities: ['Senior'], yearsExperience: 5 }) });
+    for (const id of ['a', 'b']) await setDoc(doc(holder.database, 'candidates', id), { id, name: id, firstName: id, lastName: 'Test', phone: '555-0100', location: 'Remote', family: 'DevOps', email: `${id}@example.com`, portalEnabled: true, status: 'Active', skills: [{ name: 'AWS', source: 'Profile', evidence: 'Verified work' }], matchPreferences: preferences({ targetRoles: ['Engineer'], locations: ['Remote'], workTypes: ['Remote'], authorizations: ['US authorized'], seniorities: ['Senior'], yearsExperience: 5 }) });
   });
   afterAll(async () => { await environment.cleanup(); });
   it('stores a shared JD once and creates independent candidate applications', async () => {

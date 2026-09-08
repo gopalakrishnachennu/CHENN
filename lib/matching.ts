@@ -1,6 +1,7 @@
 import type { Candidate } from './types';
 import type { StructuredJobRequirements } from './jd-intelligence';
 import { extractStructuredRequirements } from './jd-intelligence';
+import { candidateRequiredFields } from './requirements';
 
 export type CandidatePreferences = {
   secondaryFamilies: string[]; targetRoles: string[]; locations: string[];
@@ -75,6 +76,8 @@ export async function catalogId(job: Pick<CatalogJob, 'company' | 'title' | 'loc
 export function evaluateMatch(job: CatalogJob, candidate: Candidate, at = new Date()): JobMatch {
   const p = preferences(candidate.matchPreferences);
   const blocked: string[] = []; const uncertain: string[] = [];
+  const candidateGaps = candidateRequiredFields(candidate);
+  if (candidateGaps.length) uncertain.push(`Candidate profile incomplete: ${candidateGaps.join(', ')}.`);
   const inList = (list: string[], value: string) => list.some(x => canonical(x) === canonical(value));
   if (candidate.status !== 'Active') blocked.push('Candidate is not active.');
   if (job.status !== 'Open' || Date.parse(job.expiresAt) <= at.getTime()) blocked.push('Job is closed or expired.');

@@ -28,6 +28,7 @@ import {
   validateGrounding,
 } from './evidence';
 import { provisionGmail } from './gmail-service';
+import { candidateRequiredFields, careerRequiredFields } from './requirements';
 import { evaluateMatch, preferences, type CatalogJob } from './matching';
 import {
   buildSkillPlan,
@@ -666,6 +667,8 @@ export async function runFirebaseAction(
     const id = crypto.randomUUID();
     const career = careerSchema.parse(payload.career ?? emptyCareer());
     const familyName = required(payload, 'family');
+    const requiredCandidate = candidateRequiredFields({ ...payload, email, family: familyName });
+    if (requiredCandidate.length) throw new Error(`Complete required candidate fields: ${requiredCandidate.join(', ')}.`);
     const family = await familyByName(familyName);
     if (!family) throw new Error('Choose an active job family.');
     const candidate = candidateShape({
@@ -705,6 +708,8 @@ export async function runFirebaseAction(
     }
     const career = careerSchema.parse(payload.career ?? current.career ?? emptyCareer());
     const familyName = required(payload, 'family');
+    const requiredCandidate = candidateRequiredFields({ ...current, ...payload, email: String(payload.email ?? current.email), family: familyName });
+    if (requiredCandidate.length) throw new Error(`Complete required candidate fields: ${requiredCandidate.join(', ')}.`);
     const family = await familyByName(familyName);
     if (!family) throw new Error('Choose an active job family.');
     const candidate = candidateShape({
@@ -830,6 +835,8 @@ export async function runFirebaseAction(
     );
     if (!candidateSnapshot.exists()) throw new Error('Candidate not found.');
     const candidate = candidateSnapshot.data() as Candidate;
+    const candidateGaps = [...candidateRequiredFields(candidate), ...careerRequiredFields(candidate.career)];
+    if (candidateGaps.length) throw new Error(`Candidate is not resume-ready: ${candidateGaps.join(', ')}.`);
     const familyName = required(payload, 'family');
     const family = await familyByName(familyName);
     if (!family) throw new Error('Choose an active job family.');

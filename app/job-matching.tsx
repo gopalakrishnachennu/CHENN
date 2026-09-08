@@ -8,7 +8,7 @@ import { parseJobImport, preferences, type CatalogJob, type JobMatch } from '@/l
 
 const fieldClass = 'w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm';
 function Field({ name, label, value = '', type = 'text', required = false }: { name: string; label: string; value?: string | number; type?: string; required?: boolean }) {
-  return <label className="grid gap-1 text-sm font-medium">{label}<input className={fieldClass} name={name} defaultValue={value} type={type} required={required} step={type === 'number' ? 'any' : undefined} /></label>;
+  return <label className="grid gap-1 text-sm font-medium">{label}{required ? ' *' : ''}<input className={fieldClass} name={name} defaultValue={value} type={type} required={required} step={type === 'number' ? 'any' : undefined} /></label>;
 }
 function Cell({ children }: { children: ReactNode }) { return <td className="border-b px-3 py-3 align-top">{children}</td>; }
 export function JobMatching({ notify, openStudio }: { notify: (message: string, tone?: 'success' | 'error') => void; openStudio: (step: number, id?: string) => void }) {

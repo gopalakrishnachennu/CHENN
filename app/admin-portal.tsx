@@ -636,11 +636,11 @@ function CandidateDialog({
             ).map(([key, label]) => (
               <label key={key} className="space-y-1.5">
                 <span className="text-xs font-semibold text-[#485164]">
-                  {label}
+                  {label}{['firstName', 'lastName', 'email', 'phone', 'location'].includes(key) ? ' *' : ''}
                 </span>
                 <input
                   type={key === 'email' ? 'email' : 'text'}
-                  required={['firstName', 'lastName', 'email'].includes(key)}
+                  required={['firstName', 'lastName', 'email', 'phone', 'location'].includes(key)}
                   value={String(draft[key])}
                   onChange={(event) => field(key, event.target.value)}
                   className="h-11 w-full rounded-xl border border-[#dfe3ea] px-3.5 text-sm outline-none focus:border-[#7173e8]"
@@ -649,7 +649,7 @@ function CandidateDialog({
             ))}
             <label className="space-y-1.5">
               <span className="text-xs font-semibold text-[#485164]">
-                Approved job family
+                Approved job family *
               </span>
               <select
                 value={draft.family}
@@ -1046,7 +1046,7 @@ function JobDialog({
               </select>
             </label>
             <label className="space-y-1.5">
-              <span className="text-xs font-semibold">Job family</span>
+              <span className="text-xs font-semibold">Job family *</span>
               <select
                 value={draft.family}
                 onChange={(event) => set('family', event.target.value)}
@@ -1071,9 +1071,9 @@ function JobDialog({
               ] as const
             ).map(([key, label]) => (
               <label key={key} className="space-y-1.5">
-                <span className="text-xs font-semibold">{label}</span>
+                <span className="text-xs font-semibold">{label}{['company', 'title', 'location', 'workType', 'targetRole', 'targetLocation'].includes(key) ? ' *' : ''}</span>
                 <input
-                  required={['company', 'title'].includes(key)}
+                  required={['company', 'title', 'location', 'workType', 'targetRole', 'targetLocation'].includes(key)}
                   type={key === 'sourceUrl' ? 'url' : 'text'}
                   value={draft[key]}
                   onChange={(event) => set(key, event.target.value)}
