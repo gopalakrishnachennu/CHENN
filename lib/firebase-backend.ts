@@ -755,6 +755,8 @@ export async function runFirebaseAction(
 
   if (action === 'job.create' || action === 'job.update') {
     const updating = action === 'job.update';
+    if (!updating)
+      throw new Error('Candidate-specific JD creation is disabled. Add or import the JD from Job matching so it can be shared across eligible candidates.');
     const id = updating ? required(payload, 'id') : crypto.randomUUID();
     const existingSnapshot = updating
       ? await getDoc(doc(firebaseDb, 'jobs', id))

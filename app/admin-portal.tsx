@@ -1255,9 +1255,11 @@ function JobDialog({
 
 function JobsPage({
   openStudio,
+  openMatching,
   notify,
 }: {
   openStudio: (step?: number, jobId?: string) => void;
+  openMatching: () => void;
   notify: AdminPortalProps['notify'];
 }) {
   const { state, act } = usePlatform();
@@ -1313,19 +1315,16 @@ function JobsPage({
           <>
             <Button
               variant="outline"
-              onClick={() => {
-                setSelected(null);
-                setOpen(true);
-              }}
+              onClick={openMatching}
               className="h-10 rounded-xl text-xs"
             >
-              <UploadCloud className="size-4" /> Import JD
+              <UploadCloud className="size-4" /> Add/import JD
             </Button>
             <Button
-              onClick={() => openStudio(1)}
+              onClick={openMatching}
               className="h-10 rounded-xl bg-[#5b5de4] text-xs hover:bg-[#4d4fcf]"
             >
-              <Plus className="size-4" /> Guided setup
+              <Plus className="size-4" /> Job matching
             </Button>
           </>
         }
@@ -1466,7 +1465,7 @@ function JobsPage({
           )}
         </div>
       </div>
-      <JobDialog job={selected} open={open} setOpen={setOpen} notify={notify} />
+      <p className="mt-3 text-xs text-slate-500">JDs are shared catalog records. Candidate applications appear here only after an admin approves a match.</p>
     </>
   );
 }
@@ -1498,12 +1497,14 @@ const wizardSteps = [
 
 function ResumeStudio({
   step,
+  openMatching,
   setStep,
   jobId,
   setJobId,
   notify,
 }: {
   step: number;
+  openMatching: () => void;
   setStep: (step: number) => void;
   jobId: string | null;
   setJobId: (id: string | null) => void;
@@ -1713,6 +1714,10 @@ function ResumeStudio({
       {step === 2 && (
         <section className="grid gap-6 xl:grid-cols-[1fr_330px]">
           <div className="rounded-2xl border border-[#e6e9ef] bg-white p-6 sm:p-8">
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#dfe8ff] bg-[#f7f8ff] p-4 text-sm text-[#4c5870]">
+              <span>JDs are shared catalog records now. Add/import this JD in Job matching, approve its candidate matches, then return here to generate a resume.</span>
+              <Button type="button" variant="outline" onClick={openMatching}>Open Job matching</Button>
+            </div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#7679dc]">
               Step 2 of 5
             </p>
@@ -3890,6 +3895,7 @@ export function AdminPortal({
     setStudioStep(step);
     setActivePage('Resume studio');
   };
+  const openMatching = () => setActivePage('Job matching');
   const content = () => {
     switch (activePage) {
       case 'Job matching':
@@ -3901,11 +3907,12 @@ export function AdminPortal({
           <CandidatesPage previewCandidate={previewCandidate} notify={notify} />
         );
       case 'Jobs & JDs':
-        return <JobsPage openStudio={openStudio} notify={notify} />;
+        return <JobsPage openStudio={openStudio} openMatching={openMatching} notify={notify} />;
       case 'Resume studio':
         return (
           <ResumeStudio
             step={studioStep}
+            openMatching={openMatching}
             setStep={setStudioStep}
             jobId={studioJobId}
             setJobId={setStudioJobId}
