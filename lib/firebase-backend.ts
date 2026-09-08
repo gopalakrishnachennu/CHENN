@@ -50,6 +50,8 @@ import type {
   Prompt,
   ResumeContent,
   ResumeVersion,
+  OnboardingInvite,
+  OnboardingSubmission,
 } from './types';
 
 export type FirebaseActionResult = {
@@ -519,6 +521,12 @@ export async function readFirebaseState(user: User): Promise<AppState> {
   const logs = admin
     ? sortNewest(await listDocuments<AuditLog>('logs')).slice(0, 100)
     : [];
+  const onboardingInvites = admin
+    ? sortNewest(await listDocuments<OnboardingInvite>('onboardingInvites'))
+    : [];
+  const onboardingSubmissions = admin
+    ? (await listDocuments<OnboardingSubmission>('onboardingSubmissions')).sort((a, b) => b.submittedAt.localeCompare(a.submittedAt))
+    : [];
 
   return {
     role: admin ? 'admin' : 'candidate',
@@ -533,6 +541,8 @@ export async function readFirebaseState(user: User): Promise<AppState> {
     announcements,
     evaluations,
     logs,
+    onboardingInvites,
+    onboardingSubmissions,
     credential: admin ? browserCredential() : { connected: false },
   };
 }
@@ -652,6 +662,40 @@ export async function runFirebaseAction(
   requireAdmin(user);
   const actorEmail = user.email ?? ADMIN_EMAIL;
   const timestamp = now();
+
+  if (action === 'onboarding.invite') {
+    const id = `${crypto.randomUUID()}${crypto.randomUUID().replaceAll('-', '')}`;
+    const invite: OnboardingInvite = { id, status: 'Open', expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(), createdAt: timestamp, createdBy: actorEmail };
+    await setDoc(doc(firebaseDb, 'onboardingInvites', id), invite);
+    await audit(actorEmail, 'onboarding.invite_created', 'onboarding_invite', id);
+    return { ok: true, id, link: `${typeof window !== 'undefined' ? window.location.origin : 'https://chenn.web.app'}#onboard/${id}`, message: 'Onboarding link created. Copy and send it to the candidate.' };
+  }
+
+  if (action === 'onboarding.approve' || action === 'onboarding.reject') {
+    const id = required(payload, 'id');
+    const snapshot = await getDoc(doc(firebaseDb, 'onboardingSubmissions', id));
+    if (!snapshot.exists()) throw new Error('Onboarding submission not found.');
+    const submission = snapshot.data() as OnboardingSubmission;
+    if (submission.status !== 'Pending') throw new Error('This onboarding submission has already been reviewed.');
+    if (action === 'onboarding.reject') {
+      await updateDoc(doc(firebaseDb, 'onboardingSubmissions', id), { status: 'Rejected', reviewedAt: timestamp, reviewedBy: actorEmail, rejectionReason: String(payload.reason ?? '') });
+      await audit(actorEmail, 'onboarding.rejected', 'onboarding_submission', id);
+      return { ok: true, message: 'Onboarding submission rejected.' };
+    }
+    const family = await familyByName(submission.family);
+    if (!family) throw new Error('The submitted job family is not active. Update the family before approval.');
+    const gaps = [...candidateRequiredFields({ ...submission, status: 'Active' }), ...careerRequiredFields(submission.career)];
+    if (gaps.length) throw new Error(`Submission is incomplete: ${gaps.join(', ')}.`);
+    const duplicate = await listDocuments<Candidate>('candidates', [where('email', '==', submission.email.toLowerCase())]);
+    if (duplicate.length) throw new Error('A candidate with this email already exists.');
+    const candidateId = crypto.randomUUID();
+    const candidate = candidateShape({ id: candidateId, email: submission.email.toLowerCase(), firstName: submission.firstName, lastName: submission.lastName, phone: submission.phone, headline: submission.headline, summary: '', location: submission.location, family: family.name, status: 'Active', portalEnabled: true, career: submission.career, skills: deriveCandidateSkills(submission.career, family.skills), createdAt: timestamp, updatedAt: timestamp });
+    await setDoc(doc(firebaseDb, 'candidates', candidateId), candidate);
+    await updateDoc(doc(firebaseDb, 'onboardingSubmissions', id), { status: 'Approved', reviewedAt: timestamp, reviewedBy: actorEmail, candidateId });
+    await updateDoc(doc(firebaseDb, 'onboardingInvites', submission.inviteId), { status: 'Used', submissionId: id });
+    await audit(actorEmail, 'onboarding.approved', 'candidate', candidateId, { submissionId: id });
+    return { ok: true, message: `${candidate.name} was onboarded.`, candidateId };
+  }
 
   if (action === 'candidate.create') {
     const firstName = required(payload, 'firstName');
@@ -1391,6 +1435,29 @@ export async function runFirebaseAction(
   }
 
   throw new Error(`Unknown action: ${action}`);
+}
+
+export async function readOnboardingInvite(id: string) {
+  const snapshot = await getDoc(doc(firebaseDb, 'onboardingInvites', id));
+  if (!snapshot.exists()) throw new Error('This onboarding link is invalid.');
+  const invite = snapshot.data() as OnboardingInvite;
+  if (invite.status !== 'Open' || Date.parse(invite.expiresAt) <= Date.now()) throw new Error('This onboarding link has expired or was already used.');
+  return invite;
+}
+
+export async function submitOnboarding(input: Omit<OnboardingSubmission, 'id' | 'status' | 'submittedAt'>) {
+  const invite = await readOnboardingInvite(input.inviteId);
+  const existing = await getDocs(query(collection(firebaseDb, 'onboardingSubmissions'), where('inviteId', '==', input.inviteId)));
+  if (!existing.empty) throw new Error('This onboarding link has already been submitted.');
+  const email = input.email.trim().toLowerCase();
+  const career = careerSchema.parse(input.career);
+  const gaps = [...candidateRequiredFields({ ...input, email }), ...careerRequiredFields(career)];
+  if (gaps.length) throw new Error(`Complete required fields: ${gaps.join(', ')}.`);
+  const id = crypto.randomUUID();
+  const submission: OnboardingSubmission = { ...input, email, career, id, status: 'Pending', submittedAt: now() };
+  await setDoc(doc(firebaseDb, 'onboardingSubmissions', id), submission);
+  void invite;
+  return { ok: true, message: 'Your information was submitted for admin approval.' };
 }
 
 export async function connectFirebaseOpenAI(

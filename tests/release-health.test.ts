@@ -130,6 +130,8 @@ function healthyState(): AppState {
       },
     ],
     credential: { connected: false },
+    onboardingInvites: [],
+    onboardingSubmissions: [],
   };
 }
 

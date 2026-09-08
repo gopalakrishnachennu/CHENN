@@ -12,6 +12,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { AdminPortal, type AdminPage } from './admin-portal';
 import { CandidatePortal } from './candidate-portal';
+import { PublicOnboarding } from './onboarding';
 import { PlatformProvider, usePlatform } from '@/lib/platform-context';
 
 type ToolDefinition = {
@@ -292,6 +293,7 @@ function PortalShell() {
       'Gmail',
       'Overview',
       'Candidates',
+      'Onboarding',
       'Jobs & JDs',
       'Resume studio',
       'Resume history',
@@ -436,6 +438,10 @@ function PortalShell() {
 }
 
 export default function Home() {
+  const token = typeof window !== 'undefined' && window.location.hash.startsWith('#onboard/')
+    ? window.location.hash.replace(/^#onboard\//, '').split(/[/?#]/)[0]
+    : '';
+  if (token) return <PublicOnboarding token={decodeURIComponent(token)} />;
   return (
     <PlatformProvider>
       <PortalShell />

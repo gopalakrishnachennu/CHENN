@@ -216,6 +216,8 @@ export async function readState(db: D1Database, auth: AuthContext): Promise<AppS
     announcements,
     evaluations,
     logs,
+    onboardingInvites: [],
+    onboardingSubmissions: [],
     credential,
   };
 }

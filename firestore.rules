@@ -10,6 +10,10 @@ service cloud.firestore {
       return signedIn() && request.auth.token.email == 'gopalakrishnachennu@gmail.com';
     }
 
+    function anonymous() {
+      return request.auth != null && request.auth.token.email == null;
+    }
+
     function ownsCandidate(candidateId) {
       let candidate = get(/databases/$(database)/documents/candidates/$(candidateId));
       return signedIn()
@@ -91,6 +95,22 @@ service cloud.firestore {
 
     match /logs/{logId} {
       allow read, write: if isAdmin();
+    }
+
+    match /onboardingInvites/{inviteId} {
+      allow read: if isAdmin() || (anonymous() && resource.data.status == 'Open' && resource.data.expiresAt > request.time);
+      allow write: if isAdmin();
+    }
+
+    match /onboardingSubmissions/{submissionId} {
+      allow read: if isAdmin();
+      allow create: if anonymous()
+        && request.resource.data.status == 'Pending'
+        && request.resource.data.inviteId is string
+        && exists(/databases/$(database)/documents/onboardingInvites/$(request.resource.data.inviteId))
+        && get(/databases/$(database)/documents/onboardingInvites/$(request.resource.data.inviteId)).data.status == 'Open'
+        && get(/databases/$(database)/documents/onboardingInvites/$(request.resource.data.inviteId)).data.expiresAt > request.time;
+      allow update, delete: if isAdmin();
     }
 
     match /matchReviewSignals/{signalId} {

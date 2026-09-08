@@ -20,6 +20,7 @@ const firebaseConfig = {
 export const firebaseApp = getApps()[0] ?? initializeApp(firebaseConfig);
 export const firebaseAuth = getAuth(firebaseApp);
 export const googleProvider = new GoogleAuthProvider();
+export { firebaseAuth as onboardingAuth };
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
 let analyticsPromise: Promise<Analytics | null> | null = null;

@@ -38,6 +38,9 @@ const requiredActions = [
   'announcement.save',
   'announcement.delete',
   'evaluation.run',
+  'onboarding.invite',
+  'onboarding.approve',
+  'onboarding.reject',
 ];
 // Supported for existing records and migrations, but intentionally omitted from
 // candidate onboarding because verified skills now come from career evidence.

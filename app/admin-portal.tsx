@@ -36,6 +36,7 @@ import {
   Sparkles,
   Trash2,
   UploadCloud,
+  UserPlus,
   UsersRound,
   WandSparkles,
   X,
@@ -67,6 +68,7 @@ import type {
   Prompt,
   ResumeContent,
   SkillSource,
+  OnboardingSubmission,
 } from '@/lib/types';
 
 export type AdminPage =
@@ -74,6 +76,7 @@ export type AdminPage =
   | 'Gmail'
   | 'Overview'
   | 'Candidates'
+  | 'Onboarding'
   | 'Jobs & JDs'
   | 'Resume studio'
   | 'Resume history'
@@ -95,6 +98,7 @@ type AdminPortalProps = {
 const primaryNav: { label: AdminPage; icon: typeof LayoutDashboard }[] = [
   { label: 'Overview', icon: LayoutDashboard },
   { label: 'Candidates', icon: UsersRound },
+  { label: 'Onboarding', icon: UserPlus },
   { label: 'Jobs & JDs', icon: BriefcaseBusiness },
   { label: 'Job matching', icon: Gauge },
   { label: 'Gmail', icon: Bell },
@@ -719,6 +723,16 @@ function CandidateDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+function OnboardingPage({ notify }: { notify: AdminPortalProps['notify'] }) {
+  const { state, act, busy } = usePlatform();
+  const [link, setLink] = useState('');
+  const [pending, setPending] = useState<OnboardingSubmission | null>(null);
+  const createLink = async () => { try { const result = await act('onboarding.invite'); setLink(String(result.link ?? '')); notify('Onboarding link created.'); } catch (e) { notify(e instanceof Error ? e.message : 'Could not create link.', 'error'); } };
+  const review = async (action: 'onboarding.approve' | 'onboarding.reject') => { if (!pending) return; try { if (action === 'onboarding.approve') await act('onboarding.approve', { id: pending.id }); else await act('onboarding.reject', { id: pending.id }); setPending(null); notify(action.endsWith('approve') ? 'Candidate onboarded.' : 'Submission rejected.'); } catch (e) { notify(e instanceof Error ? e.message : 'Review failed.', 'error'); } };
+  const copy = async () => { if (link) { await navigator.clipboard.writeText(link); notify('Link copied.'); } };
+  return <section className="space-y-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="text-2xl font-semibold">Candidate onboarding</h1><p className="mt-1 text-sm text-slate-600">Send a secure public form, then approve submissions into the active candidate system.</p></div><Button onClick={() => void createLink()} disabled={busy}><UserPlus className="size-4" /> Create onboarding link</Button></div>{link && <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[#dfe3ff] bg-[#f7f8ff] p-4"><input className="min-w-[280px] flex-1 rounded border bg-white px-3 py-2 text-sm" readOnly value={link} /><Button variant="outline" onClick={() => void copy()}>Copy link</Button></div>}<div className="rounded border bg-white"><div className="border-b px-4 py-3 text-sm font-semibold">Pending submissions</div>{state?.onboardingSubmissions.filter(s => s.status === 'Pending').map(s => <div key={s.id} className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-4 last:border-0"><div><p className="font-semibold">{s.firstName} {s.lastName}</p><p className="text-sm text-slate-500">{s.email} · {s.family} · submitted {formatDate(s.submittedAt)}</p></div><Button variant="outline" onClick={() => setPending(s)}>Review</Button></div>)}{!state?.onboardingSubmissions.some(s => s.status === 'Pending') && <p className="p-5 text-sm text-slate-500">No pending submissions.</p>}</div><Dialog open={Boolean(pending)} onOpenChange={open => !open && setPending(null)}><DialogContent><DialogHeader><DialogTitle>Review onboarding</DialogTitle><DialogDescription>Approve to create an active candidate. Reject to discard this submission.</DialogDescription></DialogHeader>{pending && <div className="space-y-2 text-sm"><p><strong>{pending.firstName} {pending.lastName}</strong> · {pending.email}</p><p>{pending.phone} · {pending.location} · {pending.family}</p><p className="rounded bg-slate-50 p-3 whitespace-pre-wrap">{pending.career.experience[0]?.responsibilities}</p></div>}<DialogFooter><Button variant="outline" disabled={busy} onClick={() => void review('onboarding.reject')}>Reject</Button><Button disabled={busy} onClick={() => void review('onboarding.approve')}>Approve and onboard</Button></DialogFooter></DialogContent></Dialog></section>;
 }
 
 function CandidatesPage({
@@ -3808,6 +3822,8 @@ export function AdminPortal({
         return (
           <CandidatesPage previewCandidate={previewCandidate} notify={notify} />
         );
+      case 'Onboarding':
+        return <OnboardingPage notify={notify} />;
       case 'Jobs & JDs':
         return <JobsPage openStudio={openStudio} openMatching={openMatching} notify={notify} />;
       case 'Resume studio':
