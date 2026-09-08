@@ -565,11 +565,8 @@ function CandidateDialog({
   setOpen: (open: boolean) => void;
   notify: AdminPortalProps['notify'];
 }) {
-  const { state, act, upload, busy } = usePlatform();
+  const { state, act, busy } = usePlatform();
   const [draft, setDraft] = useState<CandidateDraft>(emptyCandidate());
-  const [skillsText, setSkillsText] = useState('');
-  const [resumeFile, setResumeFile] = useState<File | null>(null);
-  const [extractedText, setExtractedText] = useState('');
   useEffect(() => {
     const value = candidate ?? emptyCandidate();
     setDraft({
@@ -586,61 +583,24 @@ function CandidateDialog({
       portalEnabled: value.portalEnabled,
       career: value.career ?? emptyCareer(),
     });
-    setSkillsText(
-      candidate?.skills
-        .map(
-          (skill) =>
-            `${skill.name} | ${skill.years} | ${skill.proficiency} | ${skill.evidence}`,
-        )
-        .join('\n') ?? '',
-    );
-    setResumeFile(null);
-    setExtractedText(candidate?.baseResume?.extractedText ?? '');
   }, [candidate, open]);
   const field = (key: keyof CandidateDraft, value: string | boolean) =>
     setDraft((current) => ({ ...current, [key]: value }));
   const save = async (event: FormEvent) => {
     event.preventDefault();
     try {
-      let candidateId = draft.id;
       if (candidate) {
         const result = await act(
           'candidate.update',
           draft as unknown as Record<string, unknown>,
         );
-        candidateId = draft.id;
         notify(result.message ?? 'Candidate updated.');
       } else {
         const result = await act(
           'candidate.create',
           draft as unknown as Record<string, unknown>,
         );
-        candidateId = String(result.id);
         notify(result.message ?? 'Candidate created.');
-      }
-      const skills = skillsText
-        .split('\n')
-        .map((line) => {
-          const [name, years, proficiency, ...evidence] = line
-            .split('|')
-            .map((part) => part.trim());
-          return {
-            name,
-            years: Number(years) || 0,
-            proficiency: proficiency || 'Experienced',
-            evidence: evidence.join(' | '),
-          };
-        })
-        .filter((item) => item.name);
-      await act('candidate.skills.replace', { candidateId, skills });
-      if (resumeFile) {
-        const form = new FormData();
-        form.set('purpose', 'base-resume');
-        form.set('candidateId', candidateId);
-        form.set('file', resumeFile);
-        form.set('extractedText', extractedText);
-        const result = await upload(form);
-        notify(result.message ?? 'Base resume uploaded.');
       }
       setOpen(false);
     } catch (error) {
@@ -659,8 +619,8 @@ function CandidateDialog({
               {candidate ? `Manage ${candidate.name}` : 'Add a candidate'}
             </DialogTitle>
             <DialogDescription>
-              Profile, access, skills, location, family, and base resume are
-              managed together.
+              Capture verified employment, education, certifications, and
+              project evidence for accurate resume generation.
             </DialogDescription>
           </DialogHeader>
           <div className="corporate-form-grid corporate-candidate-grid grid sm:grid-cols-2">
@@ -717,67 +677,7 @@ function CandidateDialog({
                 <option>Archived</option>
               </select>
             </label>
-            <label className="wide-row space-y-1.5 sm:col-span-2">
-              <span className="text-xs font-semibold text-[#485164]">
-                Profile summary (optional; generated later from career history)
-              </span>
-              <textarea
-                value={draft.summary}
-                onChange={(event) => field('summary', event.target.value)}
-                className="min-h-24 w-full rounded-xl border border-[#dfe3ea] px-3.5 py-3 text-sm"
-              />
-            </label>
             <CareerEditor value={draft.career ?? emptyCareer()} onChange={career => setDraft(current => ({ ...current, career }))} />
-            <label className="wide-row space-y-1.5 sm:col-span-2">
-              <span className="text-xs font-semibold text-[#485164]">
-                Skills — one per line: Skill | years | level | evidence
-              </span>
-              <textarea
-                value={skillsText}
-                onChange={(event) => setSkillsText(event.target.value)}
-                placeholder="AWS | 5 | Advanced | Production cloud operations"
-                className="min-h-32 w-full rounded-xl border border-[#dfe3ea] px-3.5 py-3 font-mono text-xs leading-5"
-              />
-            </label>
-            <div className="wide-row rounded-xl border border-[#e3e7ed] bg-[#fafbfc] p-4 sm:col-span-2">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-xs font-semibold">Base resume</p>
-                  <p className="mt-1 text-[10px] text-[#8c95a5]">
-                    {candidate?.baseResume
-                      ? `${candidate.baseResume.originalName} · v${candidate.baseResume.version}`
-                      : 'PDF, DOCX, or TXT · text is extracted automatically · 8 MB maximum'}
-                  </p>
-                </div>
-                <label className="flex h-9 cursor-pointer items-center gap-2 rounded-xl border border-[#dfe3ea] bg-white px-3 text-[10px] font-semibold">
-                  <UploadCloud className="size-3.5" /> Choose file
-                  <input
-                    type="file"
-                    accept=".pdf,.docx,.txt"
-                    onChange={(event) =>
-                      setResumeFile(event.target.files?.[0] ?? null)
-                    }
-                    className="hidden"
-                  />
-                </label>
-              </div>
-              {resumeFile && (
-                <p className="mt-3 text-[10px] font-semibold text-[#4f51cc]">
-                  Selected: {resumeFile.name}
-                </p>
-              )}
-              <label className="mt-4 block space-y-1.5">
-                <span className="text-[10px] font-semibold text-[#596275]">
-                  Verified resume text / scanned-PDF fallback
-                </span>
-                <textarea
-                  value={extractedText}
-                  onChange={(event) => setExtractedText(event.target.value)}
-                  placeholder="Optional: paste verified text only when a scanned PDF has no readable text."
-                  className="min-h-24 w-full rounded-xl border border-[#dfe3ea] bg-white px-3 py-2 text-xs"
-                />
-              </label>
-            </div>
             <label className="wide-row flex items-center justify-between rounded-xl border border-[#e3e7ed] p-4 sm:col-span-2">
               <span>
                 <span className="block text-xs font-semibold">
