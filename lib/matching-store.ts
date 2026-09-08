@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocs, getFirestore, runTransaction, setDoc, updateDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, getFirestore, increment, runTransaction, setDoc, updateDoc } from 'firebase/firestore';
 import type { User } from 'firebase/auth';
 import { firebaseApp } from './firebase';
 import { ADMIN_EMAIL } from './constants';
@@ -101,6 +101,13 @@ export async function decideMatch(user: User, matchId: string, decision: 'Approv
     const timestamp = new Date().toISOString();
     const next = { ...fresh, reviewedDecision: decision, reviewReason: reviewReason.trim(), reviewedAt: timestamp, reviewedBy: user.email, ...(decision === 'Approved' ? { applicationId } : {}) };
     tx.set(ref, next);
+    const catalog = j.data() as CatalogJob;
+    const signalId = `${catalog.family}_${catalog.role}`.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 120);
+    tx.set(doc(db, 'matchReviewSignals', signalId), {
+      family: catalog.family, role: catalog.role, updatedAt: timestamp, lastDecision: decision,
+      lastReason: reviewReason.trim(), lastScore: fresh.score,
+      ...(decision === 'Approved' ? { approvedCount: increment(1) } : { rejectedCount: increment(1) }),
+    }, { merge: true });
     if (decision === 'Approved') {
       tx.set(doc(db, 'candidateCatalogAccess', String(c.data().email), 'jobs', old.jobId), { candidateId: old.candidateId });
       // Application data only. The JD is joined from catalogJobs when read.

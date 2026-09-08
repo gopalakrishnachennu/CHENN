@@ -93,6 +93,10 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    match /matchReviewSignals/{signalId} {
+      allow read, write: if isAdmin();
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }
