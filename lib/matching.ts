@@ -1,6 +1,6 @@
 import type { Candidate } from './types';
-import type { StructuredJobRequirements } from './jd-intelligence';
-import { extractStructuredRequirements } from './jd-intelligence';
+import type { JDCoverage, JDAnalysis, ResumeGenerationPlan, StructuredJobRequirements } from './jd-intelligence';
+import { analyzeJD, extractStructuredRequirements } from './jd-intelligence';
 import { candidateRequiredFields } from './requirements';
 
 export type CandidatePreferences = {
@@ -17,6 +17,7 @@ export type CatalogJob = {
   currency: string; source: string; sourceUrl: string; jdText: string;
   status: 'Open' | 'Closed'; expiresAt: string; createdAt: string; updatedAt: string;
   requirements?: StructuredJobRequirements;
+  intelligence?: JDAnalysis;
 };
 export type JobMatch = {
   id: string; jobId: string; candidateId: string; eligibility: 'Eligible' | 'Review' | 'Ineligible';
@@ -24,6 +25,7 @@ export type JobMatch = {
   missingMandatory: string[]; reasons: string[]; decision: 'Selected' | 'Review' | 'Rejected';
   reviewedDecision?: 'Approved' | 'Rejected'; reviewReason?: string; reviewedAt?: string; reviewedBy?: string; applicationId?: string;
   updatedAt: string; policyVersion: string;
+  jdCoverage?: JDCoverage; resumePlan?: ResumeGenerationPlan;
 };
 export const normalize = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');
 const aliases: Record<string, string> = { 'amazon web services': 'aws', 'k8s': 'kubernetes', 'nodejs': 'node.js', 'node js': 'node.js', 'gcp': 'google cloud', 'sre': 'site reliability engineer' };
@@ -61,10 +63,11 @@ export function normalizeJob(input: Record<string, unknown>, now = new Date().to
   const title = required('title');
   const jdText = required('jdText');
   const requirements = extractStructuredRequirements(jdText);
+  const intelligence = analyzeJD({ title, jdText, company: textValue(input.company), family: textValue(input.family) });
   return { company: required('company'), title, family: required('family'), role: textValue(input.role, title),
     familyConfidence: number(input.familyConfidence, 100, 0, 100)!, mandatorySkills: splitValues(input.mandatorySkills), preferredSkills: splitValues(input.preferredSkills), criticalSkills: splitValues(input.criticalSkills),
     seniority: textValue(input.seniority), minimumYears: number(input.minimumYears, null, 0, 70), location: required('location'), workType: required('workType'), authorization: textValue(input.authorization),
-    salaryMax: number(input.salaryMax, null), currency: textValue(input.currency, 'USD').toUpperCase(), source: textValue(input.source, 'Manual'), sourceUrl, jdText, requirements,
+    salaryMax: number(input.salaryMax, null), currency: textValue(input.currency, 'USD').toUpperCase(), source: textValue(input.source, 'Manual'), sourceUrl, jdText, requirements, intelligence,
     status: input.status === 'Closed' ? 'Closed' : 'Open',
     expiresAt: new Date(expiresAt).toISOString(), createdAt: textValue(input.createdAt, now), updatedAt: now };
 }
@@ -119,10 +122,11 @@ export function evaluateMatch(job: CatalogJob, candidate: Candidate, at = new Da
   if (p.targetRoles.length && !inList(p.targetRoles, job.role)) uncertain.push('Role is not an explicit candidate target.');
   if (!p.targetRoles.length) uncertain.push('Target roles need confirmation.');
   const score = Math.round(scores.skills * .45 + scores.role * .2 + scores.experience * .15 + scores.location * .1 + scores.preferences * .1);
+  const intelligence = analyzeJD({ title: job.title, jdText: job.jdText, company: job.company, family: job.family }, candidate);
   const decision = blocked.length || score < 70 ? 'Rejected' : uncertain.length || score < p.minimumScore ? 'Review' : 'Selected';
   return { id: `${job.id}_${candidate.id}`, jobId: job.id, candidateId: candidate.id,
     eligibility: blocked.length ? 'Ineligible' : uncertain.length ? 'Review' : 'Eligible', score, scores,
-    missingMandatory: missing, reasons: [...blocked, ...uncertain, `Score ${score}/100; selection threshold ${p.minimumScore}.`], decision, updatedAt: at.toISOString(), policyVersion: 'family-eligibility-v1' };
+    missingMandatory: missing, reasons: [...blocked, ...uncertain, `Score ${score}/100; selection threshold ${p.minimumScore}.`], decision, updatedAt: at.toISOString(), policyVersion: 'family-eligibility-v1', jdCoverage: intelligence.coverage, resumePlan: intelligence.resumePlan };
 }
 
 // CSV parser supports quoted commas, multiline JDs, escaped quotes and UTF-8 BOMs.

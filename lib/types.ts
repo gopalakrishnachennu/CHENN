@@ -75,6 +75,7 @@ export type BaseResume = {
 
 export type Job = {
   catalogId?: string;
+  intelligence?: import('./jd-intelligence').JDAnalysis;
   id: string;
   candidateId: string;
   company: string;
