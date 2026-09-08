@@ -71,7 +71,7 @@ service cloud.firestore {
     }
 
     match /families/{familyId} {
-      allow read: if signedIn();
+      allow read: if signedIn() || anonymous();
       allow write: if isAdmin();
     }
 

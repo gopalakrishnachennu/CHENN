@@ -634,7 +634,7 @@ function CandidateDialog({
                 ['lastName', 'Last name'],
                 ['email', 'Email address'],
                 ['phone', 'Phone'],
-                ['location', 'Target location'],
+                ['location', 'Current location'],
                 ['headline', 'Professional headline'],
               ] as const
             ).map(([key, label]) => (
@@ -665,6 +665,7 @@ function CandidateDialog({
                   .map((family) => (
                     <option key={family.id}>{family.name}</option>
                   ))}
+                <option>Custom / needs review</option>
               </select>
             </label>
             <label className="space-y-1.5">

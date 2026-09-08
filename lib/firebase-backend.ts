@@ -683,14 +683,14 @@ export async function runFirebaseAction(
       await audit(actorEmail, 'onboarding.rejected', 'onboarding_submission', id);
       return { ok: true, message: 'Onboarding submission rejected.' };
     }
-    const family = await familyByName(submission.family);
-    if (!family) throw new Error('The submitted job family is not active. Update the family before approval.');
+    const family = submission.family === 'Custom / needs review' ? undefined : await familyByName(submission.family);
+    if (!family && submission.family !== 'Custom / needs review') throw new Error('The submitted job family is not active. Update the family before approval.');
     const gaps = [...candidateRequiredFields({ ...submission, status: 'Active' }), ...careerRequiredFields(submission.career)];
     if (gaps.length) throw new Error(`Submission is incomplete: ${gaps.join(', ')}.`);
     const duplicate = await listDocuments<Candidate>('candidates', [where('email', '==', submission.email.toLowerCase())]);
     if (duplicate.length) throw new Error('A candidate with this email already exists.');
     const candidateId = crypto.randomUUID();
-    const candidate = candidateShape({ id: candidateId, email: submission.email.toLowerCase(), firstName: submission.firstName, lastName: submission.lastName, phone: submission.phone, headline: submission.headline, summary: '', location: submission.location, family: family.name, status: 'Active', portalEnabled: true, career: submission.career, skills: deriveCandidateSkills(submission.career, family.skills), createdAt: timestamp, updatedAt: timestamp });
+    const candidate = candidateShape({ id: candidateId, email: submission.email.toLowerCase(), firstName: submission.firstName, lastName: submission.lastName, phone: submission.phone, headline: submission.headline, summary: '', location: submission.location, family: family?.name ?? 'Custom / needs review', status: 'Active', portalEnabled: true, career: submission.career, skills: deriveCandidateSkills(submission.career, family?.skills ?? []), createdAt: timestamp, updatedAt: timestamp });
     await setDoc(doc(firebaseDb, 'candidates', candidateId), candidate);
     await updateDoc(doc(firebaseDb, 'onboardingSubmissions', id), { status: 'Approved', reviewedAt: timestamp, reviewedBy: actorEmail, candidateId });
     await updateDoc(doc(firebaseDb, 'onboardingInvites', submission.inviteId), { status: 'Used', submissionId: id });
@@ -714,8 +714,8 @@ export async function runFirebaseAction(
     const familyName = required(payload, 'family');
     const requiredCandidate = candidateRequiredFields({ ...payload, email, family: familyName });
     if (requiredCandidate.length) throw new Error(`Complete required candidate fields: ${requiredCandidate.join(', ')}.`);
-    const family = await familyByName(familyName);
-    if (!family) throw new Error('Choose an active job family.');
+    const family = familyName === 'Custom / needs review' ? undefined : await familyByName(familyName);
+    if (!family && familyName !== 'Custom / needs review') throw new Error('Choose an active job family.');
     const candidate = candidateShape({
       id,
       email,
@@ -729,7 +729,7 @@ export async function runFirebaseAction(
       family: familyName,
       status: 'Active',
       portalEnabled: payload.portalEnabled !== false,
-      skills: deriveCandidateSkills(career, family.skills),
+      skills: deriveCandidateSkills(career, family?.skills ?? []),
       createdAt: timestamp,
       updatedAt: timestamp,
     });
@@ -755,8 +755,8 @@ export async function runFirebaseAction(
     const familyName = required(payload, 'family');
     const requiredCandidate = candidateRequiredFields({ ...current, ...payload, email: String(payload.email ?? current.email), family: familyName });
     if (requiredCandidate.length) throw new Error(`Complete required candidate fields: ${requiredCandidate.join(', ')}.`);
-    const family = await familyByName(familyName);
-    if (!family) throw new Error('Choose an active job family.');
+    const family = familyName === 'Custom / needs review' ? undefined : await familyByName(familyName);
+    if (!family && familyName !== 'Custom / needs review') throw new Error('Choose an active job family.');
     const candidate = candidateShape({
       ...current,
       id,
@@ -771,7 +771,7 @@ export async function runFirebaseAction(
       family: familyName,
       status: String(payload.status ?? current.status) as Candidate['status'],
       portalEnabled: payload.portalEnabled !== false,
-      skills: deriveCandidateSkills(career, family.skills, current.skills ?? []),
+      skills: deriveCandidateSkills(career, family?.skills ?? [], current.skills ?? []),
       createdAt: current.createdAt,
       updatedAt: timestamp,
     });
@@ -1444,6 +1444,10 @@ export async function readOnboardingInvite(id: string) {
   const invite = snapshot.data() as OnboardingInvite;
   if (invite.status !== 'Open' || Date.parse(invite.expiresAt) <= Date.now()) throw new Error('This onboarding link has expired or was already used.');
   return invite;
+}
+
+export async function readPublicFamilies() {
+  return (await listDocuments<JobFamily>('families')).filter(item => item.active).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export async function submitOnboarding(input: Omit<OnboardingSubmission, 'id' | 'status' | 'submittedAt'>) {

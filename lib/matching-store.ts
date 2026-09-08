@@ -50,7 +50,7 @@ export async function importCatalog(user: User, rows: Record<string, unknown>[])
       const classified = row.family ? null : classifyJobFamily(row, families);
       if (classified && classified.confidence < 80) throw new Error('Job family could not be classified confidently. Choose a family before import.');
       const job = normalizeJob({ ...row, ...(classified ? { family: classified.family, familyConfidence: classified.confidence } : {}) });
-      if (!familyNames.includes(job.family)) throw new Error('Choose an active family.');
+      if (!familyNames.includes(job.family) && job.family !== 'Custom / needs review') throw new Error('Choose an active family.');
       return { ...job, id: await catalogId(job) };
     }
     catch (error) { throw new Error(`Row ${index + 1}: ${(error as Error).message}`); }
@@ -71,7 +71,7 @@ export async function saveCatalogJob(user: User, job: CatalogJob) {
   const current = await getDoc(doc(db, 'catalogJobs', job.id));
   if (!current.exists()) throw new Error('Shared job no longer exists.');
   const allowed = (await getDocs(collection(db, 'families'))).docs.filter(d => d.data().active).map(d => d.data().name);
-  if (!allowed.includes(normalized.family)) throw new Error('Choose an active family.');
+  if (!allowed.includes(normalized.family) && normalized.family !== 'custom / needs review') throw new Error('Choose an active family.');
   // Identity fields define deduplication. Keep them stable for existing applications.
   if (await catalogId(normalized) !== job.id) throw new Error('Company, title and location identify a shared job. Import a new vacancy to change these fields.');
   await setDoc(doc(db, 'catalogJobs', job.id), { ...normalized, id: job.id });
