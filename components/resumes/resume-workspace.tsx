@@ -27,7 +27,7 @@ export function ResumeWorkspace({ initialJobId, onJobChange, notify }: { initial
   const jobs = state?.jobs.filter(item => !candidateId || item.candidateId === candidateId) ?? [];
   const versions = useMemo(() => state?.resumes.filter(item => item.jobId === initialJobId).sort((a, b) => b.version - a.version) ?? [], [state?.resumes, initialJobId]);
   const resume = versions[0];
-  const analysis = job && candidate ? analyzeJD({ title: job.title, jdText: job.jdText, company: job.company, family: job.family }, candidate) : null;
+  const analysis = useMemo(() => job && candidate ? analyzeJD({ title: job.title, jdText: job.intelligence ? '' : job.jdText, company: job.company, family: job.family }, candidate, undefined, job.intelligence) : null, [job, candidate]);
 
   useEffect(() => { if (!candidateId && state?.candidates[0]) setCandidateId(state.candidates[0].id); }, [candidateId, state?.candidates]);
   useEffect(() => { if (job) { setCandidateId(job.candidateId); setTemplate(resume?.template ?? state?.settings.templates[0] ?? 'Modern ATS'); } }, [job?.id, resume?.id, state?.settings.templates]);

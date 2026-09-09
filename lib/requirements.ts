@@ -22,6 +22,8 @@ export function careerRequiredFields(career?: Career): string[] {
 
 export function jobRequiredFields(job: Partial<Job>): string[] {
   const missing: string[] = [];
+  if (!job.salary?.trim()) missing.push('Salary');
+  if (!job.sourceUrl?.trim()) missing.push('Job URL');
   for (const [key, label] of [['company', 'Company'], ['title', 'Job title'], ['location', 'Job location'], ['workType', 'Work type'], ['family', 'Job family'], ['jdText', 'Complete job description']] as const)
     if (!String(job[key] ?? '').trim()) missing.push(label);
   return missing;

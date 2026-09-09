@@ -5,8 +5,43 @@ import { ADMIN_EMAIL } from './constants';
 import { catalogId, evaluateMatch, normalizeJob, preferences, type CatalogJob, type JobMatch } from './matching';
 import { classifyJobFamily } from './jd-intelligence';
 import type { Candidate, JobFamily } from './types';
+import { ANALYSIS_VERSION, createJDProfile, jdFingerprint, type CachedJD, type JDInput } from './jd-profile';
 
 const db = getFirestore(firebaseApp, 'chenn');
+export async function cachedJDProfile(user: User, input: JDInput): Promise<CachedJD> {
+  requireAdmin(user);
+  const hash = await jdFingerprint(input);
+  return runTransaction(db, async tx => {
+    const ref = doc(db, 'jdProfiles', hash);
+    const existing = await tx.get(ref);
+    if (existing.exists()) return existing.data() as CachedJD;
+    const result = createJDProfile(input, hash);
+    tx.set(ref, result);
+    return result;
+  });
+}
+const profileFields = (cached: CachedJD) => ({ jdHash: cached.jdHash, analysisVersion: cached.analysisVersion, jdProfile: cached.jdProfile, intelligence: cached.intelligence, requirements: cached.requirements });
+export async function ensureCatalogProfile(user: User, jobId: string) {
+  requireAdmin(user);
+  // Retry if an administrator edits the posting while its profile is being prepared.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const ref = doc(db, 'catalogJobs', jobId);
+    const snapshot = await getDoc(ref);
+    if (!snapshot.exists()) throw new Error('Shared job no longer exists.');
+    const job = { ...snapshot.data(), id: jobId } as CatalogJob;
+    if (job.jdProfile && job.intelligence && job.analysisVersion === ANALYSIS_VERSION && job.jdHash === await jdFingerprint(job)) return job;
+    const cached = await cachedJDProfile(user, job);
+    const result = await runTransaction(db, async tx => {
+      const fresh = await tx.get(ref);
+      if (!fresh.exists() || await jdFingerprint(fresh.data() as JDInput) !== cached.jdHash) return null;
+      const fields = profileFields(cached);
+      tx.update(ref, fields);
+      return { ...fresh.data(), ...fields, id: jobId } as CatalogJob;
+    });
+    if (result) return result;
+  }
+  throw new Error('Job changed during analysis. Please try again.');
+}
 async function readMatchingDataRaw() {
   const [jobs, matches] = await Promise.all([getDocs(collection(db, 'catalogJobs')), getDocs(collection(db, 'jobMatches'))]);
   return { jobs: jobs.docs.map(d => ({ ...d.data(), id: d.id }) as CatalogJob), matches: matches.docs.map(d => ({ ...d.data(), id: d.id }) as JobMatch) };
@@ -16,10 +51,11 @@ async function expireCatalogJobs() {
   const snapshot = await getDocs(collection(db, 'catalogJobs'));
   await Promise.all(snapshot.docs.filter(d => d.data().status === 'Open' && Date.parse(String(d.data().expiresAt)) <= now).map(d => updateDoc(d.ref, { status: 'Closed', updatedAt: new Date().toISOString() })));
 }
-async function recalculateMatches() {
+async function recalculateMatches(user: User) {
   const [data, candidateDocs] = await Promise.all([readMatchingDataRaw(), getDocs(collection(db, 'candidates'))]);
   const candidates = candidateDocs.docs.map(d => ({ ...d.data(), id: d.id }) as Candidate);
   let count = 0;
+  await Promise.all(data.jobs.map(job => ensureCatalogProfile(user, job.id)));
   for (const job of data.jobs) for (const candidate of candidates) {
     await runTransaction(db, async tx => {
       const ref = doc(db, 'jobMatches', `${job.id}_${candidate.id}`);
@@ -34,7 +70,7 @@ async function recalculateMatches() {
 export async function readMatchingData(user: User) {
   requireAdmin(user);
   await expireCatalogJobs();
-  await recalculateMatches();
+  await recalculateMatches(user);
   return readMatchingDataRaw();
 }
 function requireAdmin(user: User) {
@@ -49,7 +85,7 @@ export async function importCatalog(user: User, rows: Record<string, unknown>[])
     try {
       const classified = row.family ? null : classifyJobFamily(row, families);
       if (classified && classified.confidence < 80) throw new Error('Job family could not be classified confidently. Choose a family before import.');
-      const job = normalizeJob({ ...row, ...(classified ? { family: classified.family, familyConfidence: classified.confidence } : {}) });
+      const job = normalizeJob({ ...row, workType: row.workType || 'Not specified', ...(classified ? { family: classified.family, familyConfidence: classified.confidence } : {}) }, undefined, true);
       if (!familyNames.includes(job.family) && job.family !== 'Custom / needs review') throw new Error('Choose an active family.');
       return { ...job, id: await catalogId(job) };
     }
@@ -57,24 +93,26 @@ export async function importCatalog(user: User, rows: Record<string, unknown>[])
   }));
   let added = 0;
   for (const job of normalized) {
+    const cached = await cachedJDProfile(user, job);
     const created = await runTransaction(db, async tx => {
       const ref = doc(db, 'catalogJobs', job.id); const existing = await tx.get(ref);
       if (existing.exists()) return false;
-      tx.set(ref, job); return true;
+      tx.set(ref, { ...job, ...profileFields(cached) }); return true;
     });
     if (created) added++;
   }
   return { added, duplicates: rows.length - added };
 }
 export async function saveCatalogJob(user: User, job: CatalogJob) {
-  requireAdmin(user); const normalized = normalizeJob(job);
+  requireAdmin(user); const normalized = normalizeJob(job, undefined, true);
   const current = await getDoc(doc(db, 'catalogJobs', job.id));
   if (!current.exists()) throw new Error('Shared job no longer exists.');
   const allowed = (await getDocs(collection(db, 'families'))).docs.filter(d => d.data().active).map(d => d.data().name);
-  if (!allowed.includes(normalized.family) && normalized.family !== 'custom / needs review') throw new Error('Choose an active family.');
+  if (!allowed.includes(normalized.family) && normalized.family !== 'Custom / needs review') throw new Error('Choose an active family.');
   // Identity fields define deduplication. Keep them stable for existing applications.
   if (await catalogId(normalized) !== job.id) throw new Error('Company, title and location identify a shared job. Import a new vacancy to change these fields.');
-  await setDoc(doc(db, 'catalogJobs', job.id), { ...normalized, id: job.id });
+  const cached = await cachedJDProfile(user, normalized);
+  await setDoc(doc(db, 'catalogJobs', job.id), { ...normalized, ...profileFields(cached), id: job.id });
   await runMatching(user);
 }
 export async function savePreferences(user: User, candidateId: string, input: Parameters<typeof preferences>[0]) {
@@ -89,7 +127,7 @@ export async function savePreferences(user: User, candidateId: string, input: Pa
 export async function runMatching(user: User) {
   requireAdmin(user);
   await expireCatalogJobs();
-  return recalculateMatches();
+  return recalculateMatches(user);
 }
 export async function decideMatch(user: User, matchId: string, decision: 'Approved' | 'Rejected', reviewReason: string) {
   requireAdmin(user);
@@ -134,5 +172,5 @@ export async function hydrateJob<T extends { catalogId?: string }>(job: T) {
   if (!source.exists()) throw new Error('Shared job description is missing.');
   const catalog = source.data() as CatalogJob;
   return { ...catalog, targetRole: catalog.role, targetLocation: catalog.location,
-    salary: catalog.salaryMax == null ? 'Not listed' : `Up to ${catalog.currency} ${catalog.salaryMax.toLocaleString()}`, ...job };
+    salary: catalog.salary || (catalog.salaryMax == null ? 'Not listed' : `Up to ${catalog.currency} ${catalog.salaryMax.toLocaleString()}`), ...job };
 }

@@ -18,6 +18,10 @@ export type CatalogJob = {
   status: 'Open' | 'Closed'; expiresAt: string; createdAt: string; updatedAt: string;
   requirements?: StructuredJobRequirements;
   intelligence?: JDAnalysis;
+  salary?: string;
+  jdHash?: string;
+  analysisVersion?: string;
+  jdProfile?: import('./jd-profile').JDProfile;
 };
 export type JobMatch = {
   id: string; jobId: string; candidateId: string; eligibility: 'Eligible' | 'Review' | 'Ineligible';
@@ -48,9 +52,10 @@ export function preferences(input: Partial<CandidatePreferences> = {}): Candidat
     yearsExperience: number(input.yearsExperience, null, 0, 70), minimumSalary: number(input.minimumSalary, null),
     currency: String(input.currency || 'USD').toUpperCase(), minimumScore: number(input.minimumScore, 85, 70, 100)!, dailyLimit: Math.floor(number(input.dailyLimit, 10, 1, 1000)!) };
 }
-export function normalizeJob(input: Record<string, unknown>, now = new Date().toISOString()): Omit<CatalogJob, 'id'> {
+export function normalizeJob(input: Record<string, unknown>, now = new Date().toISOString(), deferAnalysis = false): Omit<CatalogJob, 'id'> {
   const required = (key: string) => { const value = textValue(input[key]); if (!value) throw new Error(`${key} is required.`); return value; };
-  let sourceUrl = textValue(input.sourceUrl);
+  let sourceUrl = required('sourceUrl');
+  const salary = required('salary');
   if (sourceUrl) {
     const url = new URL(sourceUrl);
     if (!['https:', 'http:'].includes(url.protocol)) throw new Error('Job URL must use HTTPS or HTTP.');
@@ -62,12 +67,11 @@ export function normalizeJob(input: Record<string, unknown>, now = new Date().to
   if (!Number.isFinite(Date.parse(expiresAt))) throw new Error('Invalid expiry date.');
   const title = required('title');
   const jdText = required('jdText');
-  const requirements = extractStructuredRequirements(jdText);
-  const intelligence = analyzeJD({ title, jdText, company: textValue(input.company), family: textValue(input.family) });
+  const analyzed = deferAnalysis ? {} : { requirements: extractStructuredRequirements(jdText), intelligence: analyzeJD({ title, jdText, company: textValue(input.company), family: textValue(input.family) }) };
   return { company: required('company'), title, family: required('family'), role: textValue(input.role, title),
     familyConfidence: number(input.familyConfidence, 100, 0, 100)!, mandatorySkills: splitValues(input.mandatorySkills), preferredSkills: splitValues(input.preferredSkills), criticalSkills: splitValues(input.criticalSkills),
     seniority: textValue(input.seniority), minimumYears: number(input.minimumYears, null, 0, 70), location: required('location'), workType: required('workType'), authorization: textValue(input.authorization),
-    salaryMax: number(input.salaryMax, null), currency: textValue(input.currency, 'USD').toUpperCase(), source: textValue(input.source, 'Manual'), sourceUrl, jdText, requirements, intelligence,
+    salary, salaryMax: number(input.salaryMax, null), currency: textValue(input.currency, 'USD').toUpperCase(), source: textValue(input.source, 'Manual'), sourceUrl, jdText, ...analyzed,
     status: input.status === 'Closed' ? 'Closed' : 'Open',
     expiresAt: new Date(expiresAt).toISOString(), createdAt: textValue(input.createdAt, now), updatedAt: now };
 }
@@ -122,7 +126,7 @@ export function evaluateMatch(job: CatalogJob, candidate: Candidate, at = new Da
   if (p.targetRoles.length && !inList(p.targetRoles, job.role)) uncertain.push('Role is not an explicit candidate target.');
   if (!p.targetRoles.length) uncertain.push('Target roles need confirmation.');
   const score = Math.round(scores.skills * .45 + scores.role * .2 + scores.experience * .15 + scores.location * .1 + scores.preferences * .1);
-  const intelligence = analyzeJD({ title: job.title, jdText: job.jdText, company: job.company, family: job.family }, candidate);
+  const intelligence = analyzeJD({ title: job.title, jdText: job.intelligence ? '' : job.jdText, company: job.company, family: job.family }, candidate, undefined, job.intelligence);
   const decision = blocked.length || score < 70 ? 'Rejected' : uncertain.length || score < p.minimumScore ? 'Review' : 'Selected';
   return { id: `${job.id}_${candidate.id}`, jobId: job.id, candidateId: candidate.id,
     eligibility: blocked.length ? 'Ineligible' : uncertain.length ? 'Review' : 'Eligible', score, scores,

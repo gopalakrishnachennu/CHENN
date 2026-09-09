@@ -1108,9 +1108,9 @@ function JobDialog({
               ] as const
             ).map(([key, label]) => (
               <label key={key} className="space-y-1.5">
-                <span className="text-xs font-semibold">{label}{['company', 'title', 'location', 'workType', 'targetRole', 'targetLocation'].includes(key) ? ' *' : ''}</span>
+                <span className="text-xs font-semibold">{label}{['company', 'title', 'location', 'workType', 'targetRole', 'targetLocation', 'salary', 'sourceUrl'].includes(key) ? ' *' : ''}</span>
                 <input
-                  required={['company', 'title', 'location', 'workType', 'targetRole', 'targetLocation'].includes(key)}
+                  required={['company', 'title', 'location', 'workType', 'targetRole', 'targetLocation', 'salary', 'sourceUrl'].includes(key)}
                   type={key === 'sourceUrl' ? 'url' : 'text'}
                   value={draft[key]}
                   onChange={(event) => set(key, event.target.value)}
@@ -1687,9 +1687,10 @@ function ResumeStudio({
                 ] as const
               ).map(([key, label]) => (
                 <label key={key} className="space-y-1.5">
-                  <span className="text-xs font-semibold">{label}</span>
+                  <span className="text-xs font-semibold">{label}{['company', 'title', 'salary', 'sourceUrl'].includes(key) ? ' *' : ''}</span>
                   <input
-                    required={['company', 'title'].includes(key)}
+                    required={['company', 'title', 'salary', 'sourceUrl'].includes(key)}
+                    type={key === 'sourceUrl' ? 'url' : 'text'}
                     value={draft[key]}
                     onChange={(event) =>
                       setDraft((current) => ({

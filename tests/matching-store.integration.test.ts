@@ -12,7 +12,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('Matching transactions', (
   let environment: RulesTestEnvironment;
   let store: typeof import('../lib/matching-store');
   const user = { email: 'gopalakrishnachennu@gmail.com', emailVerified: true } as User;
-  const input = { company: 'Acme', title: 'Engineer', family: 'DevOps', location: 'Remote', workType: 'Remote', jdText: 'AWS required', mandatorySkills: ['AWS'], role: 'Engineer', seniority: 'Senior', authorization: 'US authorized', minimumYears: 2, expiresAt: '2099-01-01' };
+  const input = { salary: 'USD 120,000–160,000/year', sourceUrl: 'https://example.com/jobs/1', company: 'Acme', title: 'Engineer', family: 'DevOps', location: 'Remote', workType: 'Remote', jdText: 'AWS required', mandatorySkills: ['AWS'], role: 'Engineer', seniority: 'Senior', authorization: 'US authorized', minimumYears: 2, expiresAt: '2099-01-01' };
   beforeAll(async () => {
     environment = await initializeTestEnvironment({ projectId: 'resumeos-matching-gate', firestore: { rules: readFileSync('firestore.rules', 'utf8') } });
     // Rules testing returns the compat facade; modular Firestore APIs unwrap it.
@@ -41,6 +41,26 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('Matching transactions', (
   it('validates all import rows before writing any job', async () => {
     await expect(store.importCatalog(user, [input, { ...input, family: 'Invalid' }])).rejects.toThrow('Row 2');
     expect((await getDocs(collection(holder.database, 'catalogJobs'))).size).toBe(0);
+  });
+  it('reuses one profile across candidates and replaces the reference after JD edits', async () => {
+    await store.importCatalog(user, [input]);
+    const first = (await store.readMatchingData(user)).jobs[0];
+    await store.runMatching(user);
+    expect((await getDocs(collection(holder.database, 'jdProfiles'))).size).toBe(1);
+    expect(await store.hydrateJob({ catalogId: first.id })).toMatchObject({ jdHash: first.jdHash });
+    await store.saveCatalogJob(user, { ...first, jdText: input.jdText + '\nPython preferred.' });
+    const next = (await store.readMatchingData(user)).jobs[0];
+    expect(next.jdHash).not.toBe(first.jdHash);
+    expect(next.jdProfile?.preferred_skills).toContain('Python');
+    expect((await getDocs(collection(holder.database, 'jdProfiles'))).size).toBe(2);
+  });
+  it('deduplicates simultaneous cache requests and denies candidate cache access', async () => {
+    const values = await Promise.all([store.cachedJDProfile(user, input), store.cachedJDProfile(user, input)]);
+    expect(values[0]).toEqual(values[1]);
+    expect((await getDocs(collection(holder.database, 'jdProfiles'))).size).toBe(1);
+    const candidateDb = environment.authenticatedContext('candidate', { email: 'a@example.com' }).firestore() as unknown as Firestore;
+    await expect(getDoc(doc(candidateDb, 'jdProfiles', values[0].jdHash))).rejects.toThrow();
+    await expect(setDoc(doc(candidateDb, 'jdProfiles', 'fake'), { jdProfile: {} })).rejects.toThrow();
   });
   it('rechecks an expired or changed job at approval time', async () => {
     await store.importCatalog(user, [input]); await store.runMatching(user); const data = await store.readMatchingData(user);

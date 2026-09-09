@@ -22,6 +22,8 @@ export type ClaimEvidence = {
 };
 
 export type GenerationSnapshot = {
+  jdHash?: string;
+  analysisVersion?: string;
   candidateUpdatedAt: string;
   jobUpdatedAt: string;
   catalogId?: string;
@@ -74,6 +76,9 @@ export type BaseResume = {
 };
 
 export type Job = {
+  jdHash?: string;
+  analysisVersion?: string;
+  jdProfile?: import('./jd-profile').JDProfile;
   catalogId?: string;
   intelligence?: import('./jd-intelligence').JDAnalysis;
   id: string;

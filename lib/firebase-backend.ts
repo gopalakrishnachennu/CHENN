@@ -19,7 +19,8 @@ import { ADMIN_EMAIL } from './constants';
 import { DEFAULT_SETTINGS } from './default-settings';
 import { firebaseApp } from './firebase';
 import { evaluateReleaseHealth } from './release-health';
-import { hydrateJob } from './matching-store';
+import { hydrateJob, ensureCatalogProfile, cachedJDProfile } from './matching-store';
+import { candidateGenerationInput, CANDIDATE_GENERATION_GUARDRAILS } from './jd-profile';
 import { careerSchema, emptyCareer } from './career';
 import {
   careerEvidence,
@@ -592,8 +593,8 @@ async function openAISummary(
   const key = window.localStorage.getItem(openAIKeyName);
   if (!key) return null;
   const units = careerEvidence(candidate.career).slice(0, 100);
-  const evidence = JSON.stringify(units).slice(0, 30_000);
-  if (!units.length) return null;
+  const evidence = units;
+  if (!units.length || !job.jdProfile) return null;
   try {
     const response = await fetch('https://api.openai.com/v1/responses', {
       method: 'POST',
@@ -603,8 +604,8 @@ async function openAISummary(
       },
       body: JSON.stringify({
         model,
-        instructions: `${prompt}\nSelect the source IDs that best support the target role. Never invent, infer, or rewrite facts.`,
-        input: `TARGET ROLE:\n${job.targetRole}\n\nJOB DESCRIPTION:\n${job.jdText.slice(0, 10_000)}\n\nVERIFIED CANDIDATE EVIDENCE:\n${evidence}`,
+        instructions: `${prompt}\n${CANDIDATE_GENERATION_GUARDRAILS}\nSelect the source IDs that best support the target role. Never invent, infer, or rewrite facts.`,
+        input: candidateGenerationInput(job.jdProfile, job.targetRole, evidence),
         text: {
           format: {
             type: 'json_schema',
@@ -924,9 +925,9 @@ export async function runFirebaseAction(
       title,
       location: String(payload.location ?? ''),
       workType: String(payload.workType ?? 'Not specified'),
-      salary: String(payload.salary ?? 'Not listed'),
+      salary: required(payload, 'salary'),
       source: String(payload.source ?? 'Manual'),
-      sourceUrl: safeHttpUrl(payload.sourceUrl),
+      sourceUrl: safeHttpUrl(required(payload, 'sourceUrl')),
       jdText,
       mandatorySkills,
       preferredSkills,
@@ -1055,7 +1056,13 @@ export async function runFirebaseAction(
     const jobId = required(payload, 'jobId');
     const jobSnapshot = await getDoc(doc(firebaseDb, 'jobs', jobId));
     if (!jobSnapshot.exists()) throw new Error('Job not found.');
-    const job = await hydrateJob(jobSnapshot.data() as Job);
+    const sourceJob = jobSnapshot.data() as Job;
+    if (sourceJob.catalogId) await ensureCatalogProfile(user, sourceJob.catalogId);
+    const job = await hydrateJob(sourceJob);
+    if (!job.jdProfile) {
+      const cached = await cachedJDProfile(user, job);
+      Object.assign(job, { jdHash: cached.jdHash, analysisVersion: cached.analysisVersion, jdProfile: cached.jdProfile, intelligence: cached.intelligence });
+    }
     const candidateSnapshot = await getDoc(
       doc(firebaseDb, 'candidates', job.candidateId),
     );
@@ -1163,6 +1170,8 @@ export async function runFirebaseAction(
       evidenceMap,
       validation,
       generationSnapshot: {
+        jdHash: job.jdHash,
+        analysisVersion: job.analysisVersion,
         candidateUpdatedAt: candidate.updatedAt,
         jobUpdatedAt: job.updatedAt,
         catalogId: job.catalogId,

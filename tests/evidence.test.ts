@@ -14,6 +14,17 @@ const candidate = { id: 'c1', email: 'john@example.com', firstName: 'John', last
 const job = { id: 'j1', candidateId: 'c1', company: 'Acme', title: 'Senior Platform Engineer', location: 'Seattle', workType: 'Hybrid', salary: '', source: 'Manual', sourceUrl: 'https://example.com/j1', jdText: 'AWS Kubernetes Terraform platform operations', mandatorySkills: ['AWS', 'Kubernetes'], preferredSkills: ['Terraform'], targetRole: 'Senior Platform Engineer', targetLocation: 'Seattle', family: 'DevOps', status: 'Selected', matchScore: 90, discoveredAt: '2026-01-01', appliedAt: null, appliedResumeId: null, createdAt: '2026-01-01', updatedAt: '2026-01-01' } as Job;
 
 describe('resume evidence foundation', () => {
+  it('uses 9 recent / 8 previous evidence bullets, without filling sparse roles with inventions', () => {
+    const roles = [
+      { ...career.experience[0], current: false, start: '2010-01', end: '2020-01', company: 'Older', responsibilities: Array.from({ length: 12 }, (_, i) => `Supported AWS service ${i}`).join('\n') },
+      { ...career.experience[0], responsibilities: Array.from({ length: 12 }, (_, i) => `Built Kubernetes system ${i}`).join('\n') },
+    ];
+    const result = groundedResumeContent({ ...candidate, career: { ...career, experience: roles } }, job, ['AWS'], 'Summary');
+    expect(result.content.experience.map(role => role.bullets.length)).toEqual([9, 8]);
+    expect(result.content.experience[0].company).toBe('Acme');
+    expect(validateGrounding(result.content, result.evidenceMap).passed).toBe(true);
+    expect(groundedResumeContent(candidate, job, [], 'Summary').content.experience[0].bullets.length).toBeLessThan(9);
+  });
   it('turns career records into traceable candidate skills', () => {
     const units = careerEvidence(career);
     const skills = deriveCandidateSkills(career, ['AWS', 'Kubernetes', 'Terraform']);

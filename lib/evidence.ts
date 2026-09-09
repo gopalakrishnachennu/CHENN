@@ -147,6 +147,16 @@ export function deriveCandidateSkills(
 }
 
 function relevance(text: string, job: Job) {
+  if (job.jdProfile) {
+    const source = tokens(text);
+    return Object.entries(job.jdProfile.priority_keywords).reduce((score, [priority, terms]) => {
+      const weight = { P1: 8, P2: 4, P3: 2, P4: 1 }[priority] ?? 1;
+      return score + terms.reduce((sum, term) => {
+        const keyword = [...tokens(term)];
+        return sum + (keyword.length && keyword.every(token => source.has(token)) ? weight : 0);
+      }, 0);
+    }, 0);
+  }
   const target = tokens(
     `${job.title} ${job.targetRole} ${job.jdText} ${job.mandatorySkills.join(' ')} ${job.preferredSkills.join(' ')}`,
   );
@@ -163,12 +173,16 @@ export function groundedResumeContent(
   const byId = new Map(units.map((unit) => [unit.id, unit]));
   const career = candidate.career;
   const evidenceMap: ClaimEvidence[] = [];
-  const experience = (career?.experience ?? []).map((role, roleIndex) => {
+  const usedBullets = new Set<string>();
+  const experience = (career?.experience ?? []).map((role, roleIndex) => ({ role, roleIndex })).sort((a, b) => Number(b.role.current) - Number(a.role.current) || b.role.start.localeCompare(a.role.start)).map(({ role, roleIndex }, chronologicalIndex) => {
     const roleUnits = units
       .filter((unit) => unit.id.startsWith(`experience:${roleIndex}:`))
       .sort((a, b) => relevance(b.text, job) - relevance(a.text, job))
-      .slice(0, 6);
+      .filter((unit, index, all) => all.findIndex(other => other.text.toLowerCase().trim() === unit.text.toLowerCase().trim()) === index)
+      .filter(unit => !usedBullets.has(unit.text.toLowerCase().trim()))
+      .slice(0, chronologicalIndex === 0 ? 9 : 8);
     const bullets = roleUnits.map((unit, bulletIndex) => {
+      usedBullets.add(unit.text.toLowerCase().trim());
       evidenceMap.push({
         claimId: `experience:${roleIndex}:bullet:${bulletIndex}`,
         section: 'experience',
