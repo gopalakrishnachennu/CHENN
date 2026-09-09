@@ -11,7 +11,7 @@ export type JDProfile = {
   priority_keywords: { P1: string[]; P2: string[]; P3: string[]; P4: string[] };
   experience_requirements: string[]; education_requirements: string[];
 };
-export type CachedJD = { jdHash: string; analysisVersion: string; createdAt: string; engine: 'rules'; jdProfile: JDProfile; intelligence: JDAnalysis; requirements: StructuredJobRequirements };
+export type CachedJD = { jdHash: string; sourceHash?: string; analysisVersion: string; createdAt: string; engine: 'rules' | 'openai'; model?: string; usage?: import('./ai-client').AIUsage; jdProfile: JDProfile; intelligence: JDAnalysis; requirements: StructuredJobRequirements };
 // Preserve line boundaries: requirement headings affect classification.
 const normalize = (text = '') => text.normalize('NFKC').replace(/\r\n?/g, '\n').split('\n').map(line => line.trim().replace(/[\t ]+/g, ' ')).filter(Boolean).join('\n');
 export async function jdFingerprint(input: JDInput) {

@@ -37,6 +37,12 @@ service cloud.firestore {
     match /jdProfiles/{profileId} {
       allow read, write: if isAdmin();
     }
+    match /aiRequests/{requestId} {
+      allow read, write: if isAdmin();
+    }
+    match /resumeCounters/{jobId} {
+      allow read, write: if isAdmin();
+    }
     match /catalogJobs/{jobId} {
       allow read: if isAdmin() || (
         signedIn() && exists(/databases/$(database)/documents/candidateCatalogAccess/$(request.auth.token.email)/jobs/$(jobId))

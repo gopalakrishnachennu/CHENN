@@ -12,6 +12,7 @@ import {
   updateDoc,
   where,
   writeBatch,
+  runTransaction,
   type QueryConstraint,
 } from 'firebase/firestore';
 import { deleteObject, getStorage, ref } from 'firebase/storage';
@@ -20,7 +21,10 @@ import { DEFAULT_SETTINGS } from './default-settings';
 import { firebaseApp } from './firebase';
 import { evaluateReleaseHealth } from './release-health';
 import { hydrateJob, ensureCatalogProfile, cachedJDProfile } from './matching-store';
-import { candidateGenerationInput, CANDIDATE_GENERATION_GUARDRAILS } from './jd-profile';
+import { adminAIKey } from './ai-client';
+import { writeResumeWithLLM, validateAIResumeEdit, candidateGenerationFacts, RESUME_PROMPT_VERSION } from './ai-resume';
+import { cachedAIRequest } from './ai-request-store';
+import { confirmQualifications } from './qualification-confirmation';
 import { careerSchema, emptyCareer } from './career';
 import {
   careerEvidence,
@@ -583,78 +587,6 @@ async function sha256(value: unknown) {
     .join('');
 }
 
-async function openAISummary(
-  candidate: Candidate,
-  job: Job,
-  model: string,
-  prompt: string,
-) {
-  if (typeof window === 'undefined') return null;
-  const key = window.localStorage.getItem(openAIKeyName);
-  if (!key) return null;
-  const units = careerEvidence(candidate.career).slice(0, 100);
-  const evidence = units;
-  if (!units.length || !job.jdProfile) return null;
-  try {
-    const response = await fetch('https://api.openai.com/v1/responses', {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${key}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model,
-        instructions: `${prompt}\n${CANDIDATE_GENERATION_GUARDRAILS}\nSelect the source IDs that best support the target role. Never invent, infer, or rewrite facts.`,
-        input: candidateGenerationInput(job.jdProfile, job.targetRole, evidence),
-        text: {
-          format: {
-            type: 'json_schema',
-            name: 'grounded_resume_summary',
-            strict: true,
-            schema: {
-              type: 'object',
-              additionalProperties: false,
-              properties: {
-                sourceRefs: {
-                  type: 'array',
-                  minItems: 1,
-                  maxItems: 3,
-                  items: { type: 'string', enum: units.map((unit) => unit.id) },
-                },
-              },
-              required: ['sourceRefs'],
-            },
-          },
-        },
-        max_output_tokens: 180,
-      }),
-    });
-    if (!response.ok) return null;
-    const payload = (await response.json()) as {
-      output_text?: string;
-      output?: Array<{ content?: Array<{ type?: string; text?: string }> }>;
-    };
-    const text =
-      payload.output_text ??
-      payload.output
-        ?.flatMap((item) => item.content ?? [])
-        .find((item) => item.type === 'output_text')?.text;
-    if (!text) return null;
-    const parsed = JSON.parse(text) as { sourceRefs?: string[] };
-    const selected = (parsed.sourceRefs ?? [])
-      .map((ref) => units.find((unit) => unit.id === ref))
-      .filter((unit): unit is NonNullable<typeof unit> => Boolean(unit));
-    return selected.length
-      ? {
-          summary: selected.map((unit) => unit.text).join(' '),
-          units: selected,
-        }
-      : null;
-  } catch {
-    return null;
-  }
-}
-
 export async function runFirebaseAction(
   user: User,
   action: string,
@@ -860,6 +792,20 @@ export async function runFirebaseAction(
     return { ok: true, message: `${skills.length} profile skills saved.` };
   }
 
+  if (action === 'candidate.qualifications.confirm') {
+    const candidateId = required(payload, 'candidateId');
+    if (payload.confirmed !== true) throw new Error('Confirm that the candidate holds these qualifications.');
+    const candidateRef = doc(firebaseDb, 'candidates', candidateId);
+    await runTransaction(firebaseDb, async tx => {
+      const current = await tx.get(candidateRef);
+      if (!current.exists()) throw new Error('Candidate not found.');
+      const updated = confirmQualifications(current.data() as Candidate, payload.items, actorEmail, timestamp);
+      tx.update(candidateRef, updated);
+      tx.set(doc(firebaseDb, 'logs', crypto.randomUUID()), { actorEmail, action: 'candidate.qualifications.confirmed', entityType: 'candidate', entityId: candidateId, createdAt: timestamp, details: { count: (payload.items as unknown[]).length } });
+    });
+    return { ok: true, message: 'Qualifications confirmed. They are now available for matching and resume generation.' };
+  }
+
   if (action === 'job.create' || action === 'job.update') {
     const updating = action === 'job.update';
     if (!updating)
@@ -1054,162 +1000,75 @@ export async function runFirebaseAction(
 
   if (action === 'resume.generate') {
     const jobId = required(payload, 'jobId');
+    const key = adminAIKey();
+    if (!key) throw new Error('Save your OpenAI API key in Admin Settings before generating.');
+    const settings = await mergedSettings();
+    const model = settings.system.openAIModel;
     const jobSnapshot = await getDoc(doc(firebaseDb, 'jobs', jobId));
     if (!jobSnapshot.exists()) throw new Error('Job not found.');
     const sourceJob = jobSnapshot.data() as Job;
-    if (sourceJob.catalogId) await ensureCatalogProfile(user, sourceJob.catalogId);
-    const job = await hydrateJob(sourceJob);
-    if (!job.jdProfile) {
-      const cached = await cachedJDProfile(user, job);
-      Object.assign(job, { jdHash: cached.jdHash, analysisVersion: cached.analysisVersion, jdProfile: cached.jdProfile, intelligence: cached.intelligence });
-    }
-    const candidateSnapshot = await getDoc(
-      doc(firebaseDb, 'candidates', job.candidateId),
-    );
+    let job = await hydrateJob(sourceJob);
+    const candidateSnapshot = await getDoc(doc(firebaseDb, 'candidates', job.candidateId));
     if (!candidateSnapshot.exists()) throw new Error('Candidate not found.');
     const candidate = candidateSnapshot.data() as Candidate;
+    const missing = [...candidateRequiredFields(candidate), ...careerRequiredFields(candidate.career)];
+    if (missing.length) throw new Error(`Candidate evidence is incomplete: ${missing.join(', ')}.`);
     if (job.catalogId) {
       const catalog = (await getDoc(doc(firebaseDb, 'catalogJobs', job.catalogId))).data() as CatalogJob;
       const match = evaluateMatch(catalog, candidate);
       if (match.eligibility === 'Ineligible' || match.score < 70) throw new Error('This match is no longer eligible. Recheck it in Job matching.');
-      const approved = (await getDoc(doc(firebaseDb, 'jobMatches', `${job.catalogId}_${job.candidateId}`))).data() as { reviewedDecision?: string; applicationId?: string } | undefined;
-      if (approved?.reviewedDecision !== 'Approved' || approved.applicationId !== job.id) throw new Error('Approve this job-candidate match in Job matching before generating a resume.');
+      const approved = (await getDoc(doc(firebaseDb, 'jobMatches', `${job.catalogId}_${job.candidateId}`))).data();
+      if (approved?.reviewedDecision !== 'Approved' || approved.applicationId !== job.id) throw new Error('Approve this job-candidate match before generating.');
     }
-    const family = await familyByName(job.family);
-    const settings = await mergedSettings();
-    const plan = buildSkillPlan(
-      candidate.skills ?? [],
-      family,
-      job.mandatorySkills,
-      job.preferredSkills,
-      {
-        allowFamilyContext: settings.guardrails.familyMatch,
-        allowSupportingContext: settings.guardrails.supportingContext,
-      },
-    );
-    const existing = await listDocuments<ResumeVersion>('resumes', [
-      where('jobId', '==', jobId),
-    ]);
-    const version = Math.max(0, ...existing.map((item) => item.version)) + 1;
-    const id = crypto.randomUUID();
-    const verifiedSkills = plan
-      .filter((item) => item.source === 'Profile')
-      .map((item) => item.name);
-    const activePrompt = (await listDocuments<Prompt>('prompts'))
-      .filter((item) => item.active)
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
-    const model = settings.system.openAIModel;
-    const generatedSummary = await openAISummary(
-      candidate,
-      job,
-      model,
-      activePrompt?.template ??
-        'Create a grounded, JD-first resume using only verified candidate evidence.',
-    );
-    const fallbackUnits = careerEvidence(candidate.career)
-      .filter((unit) => unit.kind === 'experience' || unit.kind === 'project')
-      .slice(0, 3);
-    const summaryUnits = generatedSummary?.units ?? fallbackUnits;
-    const summary = summaryUnits.length
-      ? summaryUnits.map((unit) => unit.text).join(' ')
-      : `Target role: ${job.targetRole || job.title}.`;
-    const grounded = groundedResumeContent(
-      candidate,
-      job,
-      verifiedSkills,
-      summary,
-    );
-    const summaryEvidence = summaryUnits.map((unit, index) => ({
-      claimId: `summary:${index}`,
-      section: 'summary' as const,
-      outputText: unit.text,
-      sourceRef: unit.id,
-      sourceText: unit.text,
-    }));
-    const evidenceMap = [...summaryEvidence, ...grounded.evidenceMap];
-    const validation = validateGrounding(grounded.content, evidenceMap);
-    if (!validation.passed)
-      throw new Error(`Resume grounding failed: ${validation.errors.join('; ')}`);
+    // Spend on AI only after candidate evidence and match approval pass preflight.
+    if (sourceJob.catalogId) {
+      await ensureCatalogProfile(user, sourceJob.catalogId, model);
+      job = await hydrateJob(sourceJob);
+    } else {
+      const cached = await cachedJDProfile(user, job, model);
+      Object.assign(job, { jdHash: cached.jdHash, analysisVersion: cached.analysisVersion, jdProfile: cached.jdProfile, intelligence: cached.intelligence });
+    }
+    const activePrompt = (await listDocuments<Prompt>('prompts')).filter(item => item.active).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
     const template = String(payload.template ?? 'Modern ATS');
-    const inputHash = await sha256({
-      candidate,
-      job,
-      prompt: activePrompt,
-      model,
-      template,
-      policyVersion: 'family-eligibility-v2',
+    const candidateSourceHash = await sha256(candidateGenerationFacts(candidate));
+    const inputHash = await sha256({ candidate: candidateGenerationFacts(candidate),
+      job: { id: job.id, jdHash: job.jdHash, targetRole: job.targetRole, title: job.title, company: job.company }, model, template, customPrompt: activePrompt?.template ?? '', promptVersion: RESUME_PROMPT_VERSION });
+    const result = await cachedAIRequest(`resume_${inputHash}`, async () => {
+      // Recover a completed save if the request-ledger acknowledgement was interrupted.
+      const recovered = await listDocuments<ResumeVersion>('resumes', [where('generationSnapshot.inputHash', '==', inputHash)]);
+      if (recovered.length) return { resumeId: recovered.sort((a, b) => b.version - a.version)[0].id };
+      const generated = await writeResumeWithLLM({ key, model }, candidate, job, activePrompt?.template ?? '');
+      const family = await familyByName(job.family);
+      const plan = buildSkillPlan(candidate.skills ?? [], family, job.mandatorySkills, job.preferredSkills, { allowFamilyContext: false, allowSupportingContext: false });
+      const versions = await listDocuments<ResumeVersion>('resumes', [where('jobId', '==', jobId)]);
+      const id = crypto.randomUUID();
+      const counterRef = doc(firebaseDb, 'resumeCounters', jobId);
+      await runTransaction(firebaseDb, async tx => {
+        const counter = await tx.get(counterRef);
+        const freshCandidate = await tx.get(doc(firebaseDb, 'candidates', candidate.id));
+        const freshJob = await tx.get(doc(firebaseDb, job.catalogId ? 'catalogJobs' : 'jobs', job.catalogId || job.id));
+        if (freshCandidate.data()?.updatedAt !== candidate.updatedAt || (job.catalogId && freshJob.data()?.jdHash !== job.jdHash) || (!job.catalogId && freshJob.data()?.updatedAt !== job.updatedAt))
+          throw new Error('Candidate or JD changed during generation. Refresh before generating again.');
+        const version = Math.max(Number(counter.data()?.version ?? 0), ...versions.map(v => v.version), 0) + 1;
+        const resume: ResumeVersion & { candidateVisible: boolean } = {
+          id, candidateId: candidate.id, jobId, parentId: counter.data()?.lastId || versions.sort((a, b) => b.version - a.version)[0]?.id || null,
+          version, content: generated.content, skillPlan: plan,
+          scores: { jdMatch: calculateMatch(plan), ats: 0, recruiterSafe: 0, evidence: generated.validation.passed ? 100 : 0 },
+          template, status: 'Ready for review', engine: 'openai-resume-v1', evidenceMap: generated.evidenceMap, validation: { passed: generated.validation.passed, errors: generated.validation.errors, warnings: generated.validation.warnings, claimCount: generated.validation.claimCount },
+          aiMetadata: { promptVersion: generated.promptVersion, usage: generated.usage, gaps: generated.gaps, factualReviewRequired: true },
+          generationSnapshot: { jdHash: job.jdHash, analysisVersion: job.analysisVersion, candidateSourceHash, candidateUpdatedAt: candidate.updatedAt, jobUpdatedAt: job.updatedAt, ...(job.catalogId ? { catalogId: job.catalogId } : {}), matchPolicyVersion: 'family-eligibility-v2', ...(activePrompt ? { promptId: activePrompt.id, promptVersion: activePrompt.version } : {}), model, template, inputHash },
+          createdAt: now(), approvedAt: null, candidateVisible: false,
+        };
+        tx.set(doc(firebaseDb, 'resumes', id), resume);
+        tx.set(counterRef, { version, lastId: id });
+        tx.set(doc(firebaseDb, 'events', crypto.randomUUID()), { jobId, candidateId: candidate.id, eventType: 'resume_generated', title: 'AI resume generated', detail: `Version ${version} · cached JD profile`, createdAt: now() });
+      });
+      await audit(actorEmail, 'resume.generated', 'resume', id, { jobId, inputHash, model, usage: generated.usage });
+      return { resumeId: id };
     });
-    const resume: ResumeVersion & { candidateVisible: boolean } = {
-      id,
-      candidateId: candidate.id,
-      jobId,
-      parentId: existing.sort((a, b) => b.version - a.version)[0]?.id ?? null,
-      version,
-      content: grounded.content,
-      skillPlan: plan,
-      scores: {
-        jdMatch: calculateMatch(plan),
-        ats: Math.min(
-          100,
-          70 +
-            Math.round(verifiedSkills.length * 2) +
-            Math.min(10, grounded.content.experience.length * 2),
-        ),
-        recruiterSafe: validation.errors.length ? 0 : 100,
-        evidence: evidenceMap.length
-          ? Math.round(
-              (evidenceMap.filter((item) => item.sourceText).length /
-                evidenceMap.length) *
-                100,
-            )
-          : 0,
-      },
-      template,
-      status: 'Ready for review',
-      engine: generatedSummary ? 'openai-evidence-safe' : 'evidence-safe',
-      evidenceMap,
-      validation,
-      generationSnapshot: {
-        jdHash: job.jdHash,
-        analysisVersion: job.analysisVersion,
-        candidateUpdatedAt: candidate.updatedAt,
-        jobUpdatedAt: job.updatedAt,
-        catalogId: job.catalogId,
-        matchPolicyVersion: 'family-eligibility-v2',
-        promptId: activePrompt?.id,
-        promptVersion: activePrompt?.version,
-        model,
-        template,
-        inputHash,
-      },
-      createdAt: timestamp,
-      approvedAt: null,
-      candidateVisible: false,
-    };
-    await setDoc(doc(firebaseDb, 'resumes', id), resume);
-    const eventId = crypto.randomUUID();
-    await setDoc(doc(firebaseDb, 'events', eventId), {
-      id: eventId,
-      jobId,
-      candidateId: candidate.id,
-      eventType: 'resume_generated',
-      title: 'Resume generated',
-      detail: `JD-first strategy · Version ${version}`,
-      createdAt: timestamp,
-    });
-    await audit(actorEmail, 'resume.generated', 'resume', id, {
-      jobId,
-      engine: resume.engine,
-      version,
-    });
-    return {
-      ok: true,
-      message: generatedSummary
-        ? 'A grounded AI resume is ready for review.'
-        : 'A recruiter-safe evidence-only resume is ready for review.',
-      resume,
-      mode: generatedSummary ? 'openai' : 'fallback',
-    };
+    const stored = await getDoc(doc(firebaseDb, 'resumes', result.resumeId));
+    if (!stored.exists()) throw new Error('The cached resume was removed. Update candidate evidence or prompt before regenerating.');
+    return { ok: true, message: 'AI resume ready for factual review. Unchanged inputs reuse the existing version.', resume: stored.data() as ResumeVersion, mode: 'openai' };
   }
 
   if (action === 'resume.edit') {
@@ -1220,6 +1079,7 @@ export async function runFirebaseAction(
     const parentSnapshot = await getDoc(doc(firebaseDb, 'resumes', parentId));
     if (!parentSnapshot.exists()) throw new Error('Resume not found.');
     const parent = parentSnapshot.data() as ResumeVersion;
+    if (parent.aiMetadata) validateAIResumeEdit(content, parent.content, parent.evidenceMap ?? []);
     const validation = parent.evidenceMap?.length
       ? validateGrounding(content, parent.evidenceMap)
       : undefined;
@@ -1240,6 +1100,7 @@ export async function runFirebaseAction(
       validation: validation ?? parent.validation,
       status: 'Ready for review',
       engine: 'admin-edit',
+      ...(parent.aiMetadata ? { aiMetadata: { ...parent.aiMetadata, factualReviewRequired: true } } : {}),
       createdAt: timestamp,
       approvedAt: null,
       candidateVisible: false,
@@ -1256,6 +1117,20 @@ export async function runFirebaseAction(
     const resumeSnapshot = await getDoc(doc(firebaseDb, 'resumes', id));
     if (!resumeSnapshot.exists()) throw new Error('Resume not found.');
     const resume = resumeSnapshot.data() as ResumeVersion;
+    if (resume.validation && !resume.validation.passed) throw new Error('This resume has failed validation.');
+    if (resume.aiMetadata && payload.factualReviewConfirmed !== true) throw new Error('Review the AI wording and confirm factual accuracy before approving.');
+    if (resume.aiMetadata && resume.generationSnapshot) {
+      const currentCandidate = await getDoc(doc(firebaseDb, 'candidates', resume.candidateId));
+      if (!currentCandidate.exists()) throw new Error('Candidate no longer exists.');
+      const factsChanged = resume.generationSnapshot.candidateSourceHash
+        ? await sha256(candidateGenerationFacts(currentCandidate.data() as Candidate)) !== resume.generationSnapshot.candidateSourceHash
+        : currentCandidate.data().updatedAt !== resume.generationSnapshot.candidateUpdatedAt;
+      if (factsChanged) throw new Error('Candidate records changed after generation. Regenerate and review before approval.');
+      if (resume.generationSnapshot.catalogId) {
+        const source = await getDoc(doc(firebaseDb, 'catalogJobs', resume.generationSnapshot.catalogId));
+        if (!source.exists() || source.data().jdHash !== resume.generationSnapshot.jdHash) throw new Error('The JD profile changed. Regenerate before approval.');
+      }
+    }
     const versions = await listDocuments<
       ResumeVersion & { candidateVisible?: boolean }
     >('resumes', [where('jobId', '==', resume.jobId)]);
@@ -1274,6 +1149,7 @@ export async function runFirebaseAction(
     batch.update(doc(firebaseDb, 'resumes', id), {
       status: 'Approved',
       approvedAt: timestamp,
+      ...(resume.aiMetadata ? { aiMetadata: { ...resume.aiMetadata, factualReviewRequired: false }, factualReviewedBy: actorEmail, factualReviewedAt: timestamp } : {}),
       candidateVisible: true,
     });
     const applied = ['Applied', 'Interview', 'Rejected', 'Offer'].includes(

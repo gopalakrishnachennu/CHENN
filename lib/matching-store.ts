@@ -6,10 +6,19 @@ import { catalogId, evaluateMatch, normalizeJob, preferences, type CatalogJob, t
 import { classifyJobFamily } from './jd-intelligence';
 import type { Candidate, JobFamily } from './types';
 import { ANALYSIS_VERSION, createJDProfile, jdFingerprint, type CachedJD, type JDInput } from './jd-profile';
+import { adminAIKey } from './ai-client';
+import { aiJDHash, analyzeJDWithLLM, AI_JD_VERSION } from './ai-jd';
+import { cachedAIRequest } from './ai-request-store';
 
 const db = getFirestore(firebaseApp, 'chenn');
-export async function cachedJDProfile(user: User, input: JDInput): Promise<CachedJD> {
+export async function cachedJDProfile(user: User, input: JDInput, model?: string): Promise<CachedJD> {
   requireAdmin(user);
+  if (model) {
+    const key = adminAIKey();
+    if (!key) throw new Error('Save your OpenAI API key in Admin Settings first.');
+    const { hash } = await aiJDHash(input, model);
+    return cachedAIRequest(`jd_${hash}`, () => analyzeJDWithLLM({ key, model }, input));
+  }
   const hash = await jdFingerprint(input);
   return runTransaction(db, async tx => {
     const ref = doc(db, 'jdProfiles', hash);
@@ -20,8 +29,8 @@ export async function cachedJDProfile(user: User, input: JDInput): Promise<Cache
     return result;
   });
 }
-const profileFields = (cached: CachedJD) => ({ jdHash: cached.jdHash, analysisVersion: cached.analysisVersion, jdProfile: cached.jdProfile, intelligence: cached.intelligence, requirements: cached.requirements });
-export async function ensureCatalogProfile(user: User, jobId: string) {
+const profileFields = (cached: CachedJD) => ({ jdHash: cached.jdHash, sourceHash: cached.sourceHash ?? cached.jdHash, analysisModel: cached.model ?? '', analysisVersion: cached.analysisVersion, jdProfile: cached.jdProfile, intelligence: cached.intelligence, requirements: cached.requirements });
+export async function ensureCatalogProfile(user: User, jobId: string, model?: string) {
   requireAdmin(user);
   // Retry if an administrator edits the posting while its profile is being prepared.
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -29,11 +38,13 @@ export async function ensureCatalogProfile(user: User, jobId: string) {
     const snapshot = await getDoc(ref);
     if (!snapshot.exists()) throw new Error('Shared job no longer exists.');
     const job = { ...snapshot.data(), id: jobId } as CatalogJob;
-    if (job.jdProfile && job.intelligence && job.analysisVersion === ANALYSIS_VERSION && job.jdHash === await jdFingerprint(job)) return job;
-    const cached = await cachedJDProfile(user, job);
+    const sourceHash = await jdFingerprint(job);
+    const current = model ? job.analysisVersion === AI_JD_VERSION && job.analysisModel === model : [ANALYSIS_VERSION, AI_JD_VERSION].includes(job.analysisVersion || '');
+    if (job.jdProfile && job.intelligence && current && (job.sourceHash || job.jdHash) === sourceHash) return job;
+    const cached = await cachedJDProfile(user, job, model);
     const result = await runTransaction(db, async tx => {
       const fresh = await tx.get(ref);
-      if (!fresh.exists() || await jdFingerprint(fresh.data() as JDInput) !== cached.jdHash) return null;
+      if (!fresh.exists() || await jdFingerprint(fresh.data() as JDInput) !== (cached.sourceHash || cached.jdHash)) return null;
       const fields = profileFields(cached);
       tx.update(ref, fields);
       return { ...fresh.data(), ...fields, id: jobId } as CatalogJob;

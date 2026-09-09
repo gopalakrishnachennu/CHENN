@@ -1,6 +1,8 @@
 import type { ResumeContent } from '@/lib/types';
+import { highlightRuns } from '@/lib/resume-format';
 
 export function ResumePaper({ content, template = 'Modern ATS' }: { content: ResumeContent; template?: string }) {
+  const rich = (text: string) => highlightRuns(text, content.highlights).map((run, i) => run.bold ? <strong key={i}>{run.text}</strong> : run.text);
   const templateClass = template.toLowerCase().includes('classic')
     ? 'resume-paper--classic'
     : template.toLowerCase().includes('executive')
@@ -16,12 +18,12 @@ export function ResumePaper({ content, template = 'Modern ATS' }: { content: Res
 
       <section className="mt-5">
         <h2 className="resume-heading">PROFESSIONAL SUMMARY</h2>
-        <p className="resume-copy">{content.summary}</p>
+        {content.summary.split('\n').filter(Boolean).map((line, index) => <p key={index} className="resume-copy">{rich(line)}</p>)}
       </section>
 
       <section className="mt-5">
-        <h2 className="resume-heading">CORE SKILLS</h2>
-        <p className="resume-copy">{content.skills.join('  •  ')}</p>
+        <h2 className="resume-heading">TECHNICAL SKILLS</h2>
+        {content.skillCategories?.length ? content.skillCategories.map((group, i) => <p key={i} className="resume-copy"><strong>{group.category}:</strong> {group.skills.join(', ')}</p>) : <p className="resume-copy">{content.skills.join('  •  ')}</p>}
       </section>
 
       {content.experience.length > 0 && (
@@ -34,7 +36,7 @@ export function ResumePaper({ content, template = 'Modern ATS' }: { content: Res
                   <div><p className="resume-role">{role.title}</p>{(role.company || role.location) && <p className="resume-company">{[role.company, role.location].filter(Boolean).join(' · ')}</p>}</div>
                   <p className="resume-date">{role.dates}</p>
                 </div>
-                <ul className="resume-list">{role.bullets.map((bullet) => <li key={bullet}>{bullet}</li>)}</ul>
+                <ul className="resume-list">{role.bullets.map((bullet) => <li key={bullet}>{rich(bullet)}</li>)}</ul>
               </div>
             ))}
           </div>

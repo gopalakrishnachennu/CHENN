@@ -22,6 +22,7 @@ export type ClaimEvidence = {
 };
 
 export type GenerationSnapshot = {
+  candidateSourceHash?: string;
   jdHash?: string;
   analysisVersion?: string;
   candidateUpdatedAt: string;
@@ -43,6 +44,7 @@ export type ResumeValidation = {
 };
 
 export type Candidate = {
+  qualificationConfirmations?: Array<{ kind: 'skill' | 'certification'; name: string; evidence: string; issuer: string; experienceIndex: number | null; confirmedBy: string; confirmedAt: string }>;
   career?: import('./career').Career;
   matchPreferences?: import('./matching').CandidatePreferences;
   id: string;
@@ -113,6 +115,8 @@ export type SkillPlanItem = {
 };
 
 export type ResumeContent = {
+  skillCategories?: Array<{ category: string; skills: string[] }>;
+  highlights?: string[];
   certifications?: string[];
   projects?: string[];
   name: string;
@@ -131,6 +135,7 @@ export type ResumeContent = {
 };
 
 export type ResumeVersion = {
+  aiMetadata?: { promptVersion: string; usage: import('./ai-client').AIUsage; gaps: string[]; factualReviewRequired: boolean };
   id: string;
   candidateId: string;
   jobId: string;

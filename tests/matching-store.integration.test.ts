@@ -7,6 +7,7 @@ import { preferences } from '../lib/matching';
 
 const holder = vi.hoisted(() => ({ database: null as unknown as Firestore }));
 vi.mock('../lib/firebase', () => ({ firebaseApp: {} }));
+vi.mock('firebase/storage', async importOriginal => ({ ...await importOriginal<typeof import('firebase/storage')>(), getStorage: () => ({}) }));
 vi.mock('firebase/firestore', async importOriginal => ({ ...await importOriginal<typeof import('firebase/firestore')>(), getFirestore: () => holder.database }));
 describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('Matching transactions', () => {
   let environment: RulesTestEnvironment;
@@ -41,6 +42,81 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('Matching transactions', (
   it('validates all import rows before writing any job', async () => {
     await expect(store.importCatalog(user, [input, { ...input, family: 'Invalid' }])).rejects.toThrow('Row 2');
     expect((await getDocs(collection(holder.database, 'catalogJobs'))).size).toBe(0);
+  });
+  it('reserves paid operations once, reuses completed results and allows explicit retry after failure', async () => {
+    const { cachedAIRequest } = await import('../lib/ai-request-store');
+    let release!: () => void; let started!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    const producer = vi.fn(async () => { started(); await pending; return { resumeId: 'r1' }; });
+    const first = cachedAIRequest('test-lock', producer);
+    await entered;
+    await expect(cachedAIRequest('test-lock', producer)).rejects.toThrow('already running');
+    release(); expect(await first).toEqual({ resumeId: 'r1' });
+    expect(await cachedAIRequest('test-lock', producer)).toEqual({ resumeId: 'r1' });
+    expect(producer).toHaveBeenCalledTimes(1);
+    await expect(cachedAIRequest('test-failure', async () => { throw new Error('Provider failed'); })).rejects.toThrow('Provider failed');
+    expect(await cachedAIRequest('test-failure', async () => 'retried')).toBe('retried');
+    const candidateDb = environment.authenticatedContext('candidate', { email: 'a@example.com' }).firestore() as unknown as Firestore;
+    await expect(getDoc(doc(candidateDb, 'aiRequests', 'test-lock'))).rejects.toThrow();
+    await expect(setDoc(doc(candidateDb, 'aiRequests', 'fake'), { status: 'ready' })).rejects.toThrow();
+    await expect(setDoc(doc(candidateDb, 'resumeCounters', 'fake'), { version: 100 })).rejects.toThrow();
+  });
+  it('persists confirmed qualifications with audit provenance and blocks unconfirmed requests', async () => {
+    const { runFirebaseAction } = await import('../lib/firebase-backend');
+    const items = [{ kind: 'skill', name: 'Python', evidence: 'Candidate demonstrated Python scripts' }];
+    await expect(runFirebaseAction(user, 'candidate.qualifications.confirm', { candidateId: 'a', items })).rejects.toThrow('Confirm');
+    await runFirebaseAction(user, 'candidate.qualifications.confirm', { candidateId: 'a', items, confirmed: true });
+    const record = (await getDoc(doc(holder.database, 'candidates', 'a'))).data()!;
+    expect(record.skills.some((skill: { name: string }) => skill.name === 'Python')).toBe(true);
+    expect(record.qualificationConfirmations[0].confirmedBy).toBe(user.email);
+    expect((await getDocs(collection(holder.database, 'logs'))).size).toBe(1);
+  });
+  it('requires factual review before approving an AI resume', async () => {
+    const { runFirebaseAction } = await import('../lib/firebase-backend');
+    await setDoc(doc(holder.database, 'resumes', 'ai-draft'), { id: 'ai-draft', candidateId: 'a', jobId: 'application', aiMetadata: { factualReviewRequired: true }, validation: { passed: true } });
+    await expect(runFirebaseAction(user, 'resume.approve', { id: 'ai-draft' })).rejects.toThrow('confirm factual accuracy');
+    await setDoc(doc(holder.database, 'resumes', 'invalid-draft'), { id: 'invalid-draft', validation: { passed: false } });
+    await expect(runFirebaseAction(user, 'resume.approve', { id: 'invalid-draft', factualReviewConfirmed: true })).rejects.toThrow('failed validation');
+  });
+  it('runs the full AI workflow: one JD call, per-candidate writing, cached reuse, and approval', async () => {
+    const { runFirebaseAction } = await import('../lib/firebase-backend');
+    const { createJDProfile } = await import('../lib/jd-profile');
+    const jdProfile = createJDProfile(input, 'test').jdProfile;
+    const originalFetch = globalThis.fetch;
+    let analysisCalls = 0; let writingCalls = 0;
+    vi.stubGlobal('window', { localStorage: { getItem: () => 'test-key-not-a-secret' } });
+    vi.stubGlobal('fetch', vi.fn(async (...args: Parameters<typeof fetch>) => {
+      if (String(args[0]) !== 'https://api.openai.com/v1/responses') return originalFetch(...args);
+      const body = JSON.parse(String(args[1]?.body));
+      let value: unknown;
+      if (body.text.format.name === 'jd_profile') { analysisCalls++; value = jdProfile; }
+      else {
+        writingCalls++; const data = JSON.parse(body.input);
+        expect(data.jdText).toBeUndefined(); expect(data.JD_PROFILE).toBeDefined();
+        const source = data.VERIFIED_EVIDENCE.find((e: { id: string }) => e.id === 'experience:0:0');
+        const claim = { text: source.text, sourceRefs: [source.id], keywords: ['AWS'] };
+        value = { summary: [claim], skillCategories: [{ category: 'Cloud', skills: ['AWS'] }], experience: [{ experienceIndex: 0, bullets: [claim] }], gaps: [] };
+      }
+      return new Response(JSON.stringify({ id: 'resp_integration', status: 'completed', output: [{ content: [{ type: 'output_text', text: JSON.stringify(value) }] }], usage: { input_tokens: 120, output_tokens: 80 } }));
+    }));
+    try {
+      for (const id of ['a', 'b']) await setDoc(doc(holder.database, 'candidates', id), { updatedAt: '2026-09-09', career: { experience: [{ company: 'Actual employer', title: 'Engineer', location: 'Remote', start: '2020-01', end: '', current: true, responsibilities: 'Built AWS infrastructure for internal services using documented workflows and reusable configuration, helping the engineering team maintain consistent deployment processes and reliable changes.', achievements: '', technologies: 'AWS' }], education: [], certifications: [], projects: [] } }, { merge: true });
+      await store.importCatalog(user, [input]);
+      const data = await store.readMatchingData(user);
+      for (const match of data.matches) await store.decideMatch(user, match.id, 'Approved', '');
+      const first = await runFirebaseAction(user, 'resume.generate', { jobId: data.matches[0].id });
+      await setDoc(doc(holder.database, 'candidates', data.matches[0].candidateId), { updatedAt: '2026-09-10' }, { merge: true });
+      const again = await runFirebaseAction(user, 'resume.generate', { jobId: data.matches[0].id });
+      expect((first.resume as { id: string }).id).toBe((again.resume as { id: string }).id);
+      await runFirebaseAction(user, 'resume.generate', { jobId: data.matches[1].id });
+      expect(analysisCalls).toBe(1); expect(writingCalls).toBe(2);
+      await store.readMatchingData(user); expect(analysisCalls).toBe(1);
+      const id = (first.resume as { id: string }).id;
+      expect((await getDoc(doc(holder.database, 'resumes', id))).data()?.candidateVisible).toBe(false);
+      await runFirebaseAction(user, 'resume.approve', { id, factualReviewConfirmed: true });
+      expect((await getDoc(doc(holder.database, 'resumes', id))).data()).toMatchObject({ status: 'Approved', candidateVisible: true });
+    } finally { vi.unstubAllGlobals(); }
   });
   it('reuses one profile across candidates and replaces the reference after JD edits', async () => {
     await store.importCatalog(user, [input]);

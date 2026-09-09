@@ -20,6 +20,8 @@ export type CatalogJob = {
   intelligence?: JDAnalysis;
   salary?: string;
   jdHash?: string;
+  sourceHash?: string;
+  analysisModel?: string;
   analysisVersion?: string;
   jdProfile?: import('./jd-profile').JDProfile;
 };

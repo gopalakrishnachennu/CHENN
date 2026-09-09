@@ -1,3 +1,4 @@
+import { highlightRuns } from './resume-format';
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from 'docx';
 import type { User } from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
@@ -270,13 +271,12 @@ async function makePdf(content: ResumeContent) {
     indent = 0,
   ) => {
     ensure(size + 7);
-    page.drawText(cleanPdfText(text), {
-      x: margin + indent,
-      y,
-      size,
-      font,
-      color,
-    });
+    let x = margin + indent;
+    for (const run of highlightRuns(cleanPdfText(text), font === regular ? content.highlights : [])) {
+      const face = run.bold ? bold : font;
+      page.drawText(run.text, { x, y, size, font: face, color });
+      x += face.widthOfTextAtSize(run.text, size);
+    }
     y -= size + 5;
   };
   const block = (text: string, size = 9, indent = 0) => {
@@ -299,9 +299,12 @@ async function makePdf(content: ResumeContent) {
   line(content.headline, 12, bold, accent);
   line(content.contact, 8, regular, muted);
   heading('Professional summary');
-  block(content.summary);
-  heading('Core skills');
-  block(content.skills.join('  •  '));
+  for (const summaryLine of content.summary.split('\n')) block(summaryLine);
+  heading('Technical skills');
+  if (content.skillCategories?.length) for (const group of content.skillCategories) {
+    line(group.category + ':', 9, bold, ink);
+    block(group.skills.join(', '));
+  } else block(content.skills.join('  •  '));
   if (content.experience.length) heading('Experience');
   for (const role of content.experience) {
     line([role.title, role.company].filter(Boolean).join(' | '), 10, bold, ink);
@@ -319,7 +322,7 @@ async function makePdf(content: ResumeContent) {
   }
   if (content.education.length) {
     heading('Education');
-    for (const item of content.education) line(item, 9, regular, muted);
+    for (const item of content.education) block(item);
   }
   for (const section of ['certifications', 'projects'] as const) {
     if (content[section]?.length) { heading(section === 'projects' ? 'Projects' : 'Certifications'); for (const item of content[section]!) block(item); }
@@ -328,6 +331,7 @@ async function makePdf(content: ResumeContent) {
 }
 
 async function makeDocx(content: ResumeContent) {
+  const rich = (text: string) => highlightRuns(text, content.highlights).map(run => new TextRun({ text: run.text, bold: run.bold }));
   const children: Paragraph[] = [
     new Paragraph({ text: content.name, heading: HeadingLevel.TITLE }),
     new Paragraph({
@@ -345,9 +349,9 @@ async function makeDocx(content: ResumeContent) {
       text: 'PROFESSIONAL SUMMARY',
       heading: HeadingLevel.HEADING_1,
     }),
-    new Paragraph({ text: content.summary }),
-    new Paragraph({ text: 'CORE SKILLS', heading: HeadingLevel.HEADING_1 }),
-    new Paragraph({ text: content.skills.join(' • ') }),
+    ...content.summary.split('\n').map(text => new Paragraph({ children: rich(text) })),
+    new Paragraph({ text: 'TECHNICAL SKILLS', heading: HeadingLevel.HEADING_1 }),
+    ...(content.skillCategories?.length ? content.skillCategories.map(group => new Paragraph({ children: [new TextRun({ text: group.category + ': ', bold: true }), new TextRun({ text: group.skills.join(', ') })] })) : [new Paragraph({ text: content.skills.join(' • ') })]),
   ];
   if (content.experience.length)
     children.push(
@@ -372,7 +376,7 @@ async function makeDocx(content: ResumeContent) {
       );
     children.push(
       ...role.bullets.map(
-        (bullet) => new Paragraph({ text: bullet, bullet: { level: 0 } }),
+        (bullet) => new Paragraph({ children: rich(bullet), bullet: { level: 0 } }),
       ),
     );
   }

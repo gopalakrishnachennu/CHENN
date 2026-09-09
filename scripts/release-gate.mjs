@@ -24,6 +24,7 @@ const requiredActions = [
   'candidate.archive',
   'candidate.delete',
   'candidate.skills.replace',
+  'candidate.qualifications.confirm',
   'job.create',
   'job.update',
   'job.status',
@@ -67,7 +68,8 @@ if (unlabeledIconActions.length) {
     `Release blocked: ${unlabeledIconActions.length} icon-only admin action(s) have no accessible label.`,
   );
 }
-const uiActions = [...adminPortal.matchAll(/act\(\s*['"]([^'"]+)['"]/g)].map(
+const actionSources = adminPortal + readFileSync(new URL('../components/resumes/resume-workspace.tsx', import.meta.url), 'utf8');
+const uiActions = [...actionSources.matchAll(/act\(\s*['"]([^'"]+)['"]/g)].map(
   (match) => match[1],
 );
 const uiActionsWithoutHandlers = [...new Set(uiActions)].filter(

@@ -9,7 +9,7 @@ import type {
 
 export type EvidenceUnit = {
   id: string;
-  kind: 'experience' | 'project' | 'certification' | 'education';
+  kind: 'experience' | 'project' | 'certification' | 'education' | 'skill';
   label: string;
   text: string;
   skills: string[];

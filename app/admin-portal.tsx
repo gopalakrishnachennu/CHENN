@@ -1543,7 +1543,8 @@ function ResumeStudio({
   const approve = async () => {
     if (!resume) return;
     try {
-      const result = await act('resume.approve', { id: resume.id });
+      if (resume.aiMetadata && !window.confirm('Have you reviewed the AI wording, source evidence, qualifications, employer claims and metrics for factual accuracy?')) return;
+      const result = await act('resume.approve', { id: resume.id, factualReviewConfirmed: Boolean(resume.aiMetadata) });
       notify(result.message ?? 'Resume approved.');
     } catch (error) {
       notify(
