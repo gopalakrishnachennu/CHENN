@@ -448,6 +448,7 @@ async function mergedSettings() {
       ...stored.notifications,
     },
     system: { ...DEFAULT_SETTINGS.system, ...stored.system },
+    onboardingForm: { ...DEFAULT_SETTINGS.onboardingForm, ...stored.onboardingForm },
   } satisfies PlatformSettings;
 }
 
@@ -599,7 +600,8 @@ export async function runFirebaseAction(
   if (action === 'onboarding.invite') {
     const id = `${crypto.randomUUID()}${crypto.randomUUID().replaceAll('-', '')}`;
     const expiresAtMs = Date.now() + 7 * 86400000;
-    const invite: OnboardingInvite = { id, status: 'Open', expiresAt: new Date(expiresAtMs).toISOString(), expiresAtMs, createdAt: timestamp, createdBy: actorEmail };
+    const settings = await mergedSettings();
+    const invite: OnboardingInvite = { id, status: 'Open', expiresAt: new Date(expiresAtMs).toISOString(), expiresAtMs, createdAt: timestamp, createdBy: actorEmail, template: settings.onboardingForm };
     await setDoc(doc(firebaseDb, 'onboardingInvites', id), invite);
     await audit(actorEmail, 'onboarding.invite_created', 'onboarding_invite', id);
     return { ok: true, id, link: `${typeof window !== 'undefined' ? window.location.origin : 'https://chenn.web.app'}#onboard/${id}`, message: 'Onboarding link created. Copy and send it to the candidate.' };

@@ -36,4 +36,14 @@ export const DEFAULT_SETTINGS: PlatformSettings = {
     'New York Metro',
     'Austin Metro',
   ],
+  onboardingForm: {
+    title: 'Tell us about yourself',
+    subtitle: 'Fields marked * are required. Enter verified facts only.',
+    showEducation: true,
+    showProjects: true,
+    showBaseResume: true,
+    requireHeadline: false,
+    requireEducation: false,
+    requireProjects: false,
+  },
 };
