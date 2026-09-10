@@ -33,7 +33,7 @@ const writes = [];
 for (let i = 0; i < candidateNames.length; i++) {
   const [firstName, lastName, family] = candidateNames[i];
   const familySkills = families.find(item => item[0] === family)[2];
-  const years = i % 2 === 0 ? 6 + (i % 3) : 5 + (i % 2);
+  const years = i % 2 === 0 ? 6 + (i % 3) : 5;
   const role = families.find(item => item[0] === family)[1][i % 3];
   const id = `demo-candidate-${String(i + 1).padStart(2, '0')}`;
   const career = { experience: [{ company: `Demo ${family.split(' ')[0]} Labs`, title: role, location: 'Bengaluru, India', start: `${2026 - years}-01`, end: '', current: true, responsibilities: `Verified ${years}+ years delivering ${familySkills.slice(0, 3).join(', ')} in production environments.`, achievements: 'Improved reliability, delivery speed, and operational visibility for business-critical systems.', technologies: familySkills.join(', ') }], education: [{ institution: 'Demo Institute of Technology', degree: "Bachelor's", field: 'Computer Science', start: '2014-06', end: '2018-05' }], certifications: [], projects: [] };
