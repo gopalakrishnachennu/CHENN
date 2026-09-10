@@ -58,6 +58,7 @@ import { ResumePaper } from '@/components/resume-paper';
 import { CandidateWorkspace } from '@/components/candidates/candidate-workspace';
 import { ResumeWorkspace } from '@/components/resumes/resume-workspace';
 import { JobMatching } from './job-matching';
+import { FamilyAssignmentToggle } from '@/components/family-assignment-toggle';
 import { GmailPanel } from './gmail-panel';
 import { CareerEditor } from './career-editor';
 import { emptyCareer } from '@/lib/career';
@@ -2747,6 +2748,7 @@ function IntelligencePage({ notify }: { notify: AdminPortalProps['notify'] }) {
           </Button>
         }
       />
+      <FamilyAssignmentToggle />
       <div className="grid gap-5 lg:grid-cols-2">
         <section className="rounded-2xl border bg-white p-6">
           <div className="flex items-start justify-between">

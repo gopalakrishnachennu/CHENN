@@ -68,6 +68,7 @@ async function recalculateMatches(user: User) {
   const [data, candidateDocs] = await Promise.all([readMatchingDataRaw(), getDocs(collection(db, 'candidates'))]);
   const candidates = candidateDocs.docs.map(d => ({ ...d.data(), id: d.id }) as Candidate);
   let count = 0;
+  const automatic = (await getDoc(doc(db, 'settings', 'platform'))).data()?.autoAssignFamilyMatches === true;
   const readyJobs = data.jobs.filter(job => job.analysisStatus !== 'Pending');
   for (const job of readyJobs) for (const candidate of candidates) {
     await runTransaction(db, async tx => {
@@ -76,7 +77,9 @@ async function recalculateMatches(user: User) {
       if (!freshJob.exists() || !freshCandidate.exists()) return;
       const match = evaluateMatch(freshJob.data() as CatalogJob, freshCandidate.data() as Candidate);
       tx.set(ref, { ...previous.data(), ...match });
-    }); count++;
+    });
+    if (automatic) await decideMatch(user, `${job.id}_${candidate.id}`, 'Approved', 'Automatically assigned by family taxonomy.', true);
+    count++;
   }
   return count;
 }
@@ -137,6 +140,12 @@ export async function saveCatalogJob(user: User, job: CatalogJob, pendingAnalysi
   if (!pendingAnalysis && normalized.family === 'Custom / needs review') throw new Error('Assign an active job family before completing analysis.');
   const cached = pendingAnalysis ? null : await cachedJDProfile(user, normalized);
   await setDoc(doc(db, 'catalogJobs', job.id), { ...normalized, ...(cached ? profileFields(cached) : {}), analysisStatus: pendingAnalysis ? 'Pending' : 'Ready', id: job.id });
+  if (!pendingAnalysis) await autoAssignFamilyMatches(user);
+}
+export async function autoAssignFamilyMatches(user: User) {
+  requireAdmin(user);
+  const settings = await getDoc(doc(db, 'settings', 'platform'));
+  if (settings.data()?.autoAssignFamilyMatches === true) await runMatching(user);
 }
 export async function savePreferences(user: User, candidateId: string, input: Parameters<typeof preferences>[0]) {
   requireAdmin(user);
@@ -152,21 +161,30 @@ export async function runMatching(user: User) {
   await expireCatalogJobs();
   return recalculateMatches(user);
 }
-export async function decideMatch(user: User, matchId: string, decision: 'Approved' | 'Rejected', reviewReason: string) {
+export async function decideMatch(user: User, matchId: string, decision: 'Approved' | 'Rejected', reviewReason: string, automatic = false) {
   requireAdmin(user);
   return runTransaction(db, async tx => {
     const ref = doc(db, 'jobMatches', matchId); const snapshot = await tx.get(ref);
     if (!snapshot.exists()) throw new Error('Match no longer exists.');
     const old = snapshot.data() as JobMatch;
+    if (automatic) {
+      const settings = await tx.get(doc(db, 'settings', 'platform'));
+      if (settings.data()?.autoAssignFamilyMatches !== true || old.applicationId || old.reviewedDecision === 'Rejected') return null;
+    }
     const [j, c] = await Promise.all([tx.get(doc(db, 'catalogJobs', old.jobId)), tx.get(doc(db, 'candidates', old.candidateId))]);
     if (!j.exists() || !c.exists()) throw new Error('Job or candidate no longer exists.');
     const fresh = evaluateMatch(j.data() as CatalogJob, c.data() as Candidate);
+    if (automatic && fresh.eligibility !== 'Eligible') return null;
     if (old.applicationId) throw new Error('This match already has an application. Manage it under Jobs & JDs.');
     if (decision === 'Approved' && fresh.eligibility === 'Ineligible') throw new Error('This assignment is blocked. Check job family and whether the vacancy is open.');
     if (fresh.decision !== 'Selected' && !reviewReason.trim()) throw new Error('Enter a reason for your review decision.');
     const applicationId = fresh.id;
     const existingApplication = await tx.get(doc(db, 'jobs', applicationId));
     const existing = existingApplication.data();
+    if (automatic && existingApplication.exists()) {
+      tx.set(ref, { ...old, ...fresh, reviewedDecision: 'Approved', applicationId });
+      return applicationId;
+    }
     // The earlier demo loader created unreviewed Selected rows. Review adopts
     // those rows in place, preserving identity and preventing a second application.
     const unreviewedDemo = old.jobId.startsWith('demo-job-') && old.candidateId.startsWith('demo-candidate-')

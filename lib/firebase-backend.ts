@@ -20,7 +20,7 @@ import { ADMIN_EMAIL } from './constants';
 import { DEFAULT_SETTINGS } from './default-settings';
 import { firebaseApp } from './firebase';
 import { evaluateReleaseHealth } from './release-health';
-import { hydrateJob, ensureCatalogProfile, cachedJDProfile } from './matching-store';
+import { autoAssignFamilyMatches, hydrateJob, ensureCatalogProfile, cachedJDProfile } from './matching-store';
 import { adminAIKey } from './ai-client';
 import { writeResumeWithLLM, validateAIResumeEdit, candidateGenerationFacts, RESUME_PROMPT_VERSION } from './ai-resume';
 import { cachedAIRequest } from './ai-request-store';
@@ -630,6 +630,7 @@ export async function runFirebaseAction(
     await updateDoc(doc(firebaseDb, 'onboardingSubmissions', id), { status: 'Approved', reviewedAt: timestamp, reviewedBy: actorEmail, candidateId });
     await updateDoc(doc(firebaseDb, 'onboardingInvites', submission.inviteId), { status: 'Used', submissionId: id });
     await audit(actorEmail, 'onboarding.approved', 'candidate', candidateId, { submissionId: id });
+    await autoAssignFamilyMatches(user);
     return { ok: true, message: `${candidate.name} was onboarded.`, candidateId };
   }
 
@@ -673,6 +674,7 @@ export async function runFirebaseAction(
       email,
       family: candidate.family,
     });
+    await autoAssignFamilyMatches(user);
     return { ok: true, message: `${candidate.name} was added.`, id };
   }
 
@@ -714,6 +716,7 @@ export async function runFirebaseAction(
     await audit(actorEmail, 'candidate.updated', 'candidate', id, {
       email: candidate.email,
     });
+    await autoAssignFamilyMatches(user);
     return { ok: true, message: `${candidate.name} was updated.` };
   }
 
@@ -1257,6 +1260,7 @@ export async function runFirebaseAction(
       throw new Error('Complete platform settings are required.');
     await setDoc(doc(firebaseDb, 'settings', 'platform'), settings);
     await audit(actorEmail, 'settings.updated', 'settings', 'platform');
+    await autoAssignFamilyMatches(user);
     return { ok: true, message: 'Platform settings were saved.' };
   }
 

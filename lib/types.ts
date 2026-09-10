@@ -197,6 +197,7 @@ export type PlatformSettings = {
   guardrails: { familyMatch: boolean; relatedRoles: 'allow' | 'review' | 'block'; supportingContext: boolean; unrelatedSkills: 'block' };
   notifications: { welcome: string; resumeApproved: string; statusChanged: string };
   system: { timezone: string; dateFormat: string; openAIModel: string };
+  autoAssignFamilyMatches?: boolean;
   templates: string[];
   locations: string[];
   onboardingForm: {

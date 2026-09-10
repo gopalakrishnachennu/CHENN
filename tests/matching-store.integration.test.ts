@@ -26,6 +26,22 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('Matching transactions', (
     for (const id of ['a', 'b']) await setDoc(doc(holder.database, 'candidates', id), { id, name: id, firstName: id, lastName: 'Test', phone: '555-0100', location: 'Remote', family: 'DevOps', email: `${id}@example.com`, portalEnabled: true, status: 'Active', skills: [{ name: 'AWS', source: 'Profile', evidence: 'Verified work' }], matchPreferences: preferences({ targetRoles: ['Engineer'], locations: ['Remote'], workTypes: ['Remote'], authorizations: ['US authorized'], seniorities: ['Senior'], yearsExperience: 5 }) });
   });
   afterAll(async () => { await environment.cleanup(); });
+  it('automatically assigns only while enabled and preserves assignments without duplicates', async () => {
+    await store.importCatalog(user, [input]);
+    await store.runMatching(user);
+    expect((await getDocs(collection(holder.database, 'jobs'))).size).toBe(0);
+    await setDoc(doc(holder.database, 'settings', 'platform'), { autoAssignFamilyMatches: true });
+    await store.autoAssignFamilyMatches(user);
+    expect((await getDocs(collection(holder.database, 'jobs'))).size).toBe(2);
+    await store.autoAssignFamilyMatches(user);
+    expect((await getDocs(collection(holder.database, 'jobs'))).size).toBe(2);
+    await setDoc(doc(holder.database, 'settings', 'platform'), { autoAssignFamilyMatches: false });
+    await store.importCatalog(user, [{ ...input, title: 'Second job' }]);
+    await store.runMatching(user);
+    expect((await getDocs(collection(holder.database, 'jobs'))).size).toBe(2);
+    const unassigned = (await store.readMatchingData(user)).matches.find(m => !m.applicationId)!;
+    expect(await store.decideMatch(user, unassigned.id, 'Approved', '', true)).toBeNull();
+  });
   it('assigns by family even with missing qualifications and incompatible preferences', async () => {
     await setDoc(doc(holder.database, 'candidates', 'a'), { skills: [], matchPreferences: preferences({ locations: ['Elsewhere'], yearsExperience: 0, minimumScore: 100 }) }, { merge: true });
     await store.importCatalog(user, [input]);
