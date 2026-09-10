@@ -3,7 +3,7 @@ import type { Career } from './career';
 
 export function candidateRequiredFields(candidate: Partial<Candidate>): string[] {
   const missing: string[] = [];
-  for (const [key, label] of [['firstName', 'First name'], ['lastName', 'Last name'], ['email', 'Email address'], ['phone', 'Phone'], ['location', 'Target location'], ['family', 'Job family']] as const)
+  for (const [key, label] of [['firstName', 'First name'], ['lastName', 'Last name'], ['email', 'Email address'], ['phone', 'Phone'], ['location', 'Current location'], ['family', 'Job family']] as const)
     if (!String(candidate[key] ?? '').trim()) missing.push(label);
   if (candidate.email && !/^\S+@\S+\.\S+$/.test(candidate.email)) missing.push('Valid email address');
   return missing;
@@ -18,6 +18,11 @@ export function careerRequiredFields(career?: Career): string[] {
   if (!first.start.trim()) missing.push('Experience start date');
   if (!(first.responsibilities.trim() || first.achievements.trim())) missing.push('Experience responsibilities or achievements');
   return missing;
+}
+
+export function resumeGenerationRequiredFields(candidate?: Partial<Candidate>): string[] {
+  if (!candidate) return ['Candidate profile'];
+  return [...candidateRequiredFields(candidate), ...careerRequiredFields(candidate.career)];
 }
 
 export function jobRequiredFields(job: Partial<Job>): string[] {

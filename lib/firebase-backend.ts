@@ -33,7 +33,7 @@ import {
   validateGrounding,
 } from './evidence';
 import { provisionGmail } from './gmail-service';
-import { candidateRequiredFields, careerRequiredFields } from './requirements';
+import { candidateRequiredFields, careerRequiredFields, resumeGenerationRequiredFields } from './requirements';
 import { evaluateMatch, preferences, type CatalogJob } from './matching';
 import {
   buildSkillPlan,
@@ -1016,7 +1016,7 @@ export async function runFirebaseAction(
     const candidateSnapshot = await getDoc(doc(firebaseDb, 'candidates', job.candidateId));
     if (!candidateSnapshot.exists()) throw new Error('Candidate not found.');
     const candidate = candidateSnapshot.data() as Candidate;
-    const missing = [...candidateRequiredFields(candidate), ...careerRequiredFields(candidate.career)];
+    const missing = resumeGenerationRequiredFields(candidate);
     if (missing.length) throw new Error(`Candidate evidence is incomplete: ${missing.join(', ')}.`);
     if (job.catalogId) {
       const catalog = (await getDoc(doc(firebaseDb, 'catalogJobs', job.catalogId))).data() as CatalogJob;

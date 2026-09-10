@@ -754,10 +754,14 @@ function Metric({ label, value }: { label: string; value: number }) { return <di
 function CandidatesPage({
   previewCandidate,
   openStudio,
+  editCandidateId,
+  onEditOpened,
   notify,
 }: {
   previewCandidate: (id: string) => void;
   openStudio: (step?: number, jobId?: string) => void;
+  editCandidateId?: string | null;
+  onEditOpened?: () => void;
   notify: AdminPortalProps['notify'];
 }) {
   const { state, act } = usePlatform();
@@ -766,6 +770,11 @@ function CandidatesPage({
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<Candidate | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!state || !editCandidateId) return;
+    const candidate = state.candidates.find(item => item.id === editCandidateId);
+    if (candidate) { setSelected(candidate); setOpen(true); onEditOpened?.(); }
+  }, [editCandidateId, onEditOpened, state]);
   if (!state) return null;
   const records = state.candidates.filter(
     (candidate) =>
@@ -3848,6 +3857,7 @@ export function AdminPortal({
   const { state, busy } = usePlatform();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [candidateEditId, setCandidateEditId] = useState<string | null>(null);
   const openStudio = (step = 1, jobId?: string) => {
     setStudioJobId(jobId ?? null);
     setStudioStep(step);
@@ -3862,14 +3872,14 @@ export function AdminPortal({
         return <GmailPanel admin />;
       case 'Candidates':
         return (
-          <CandidatesPage previewCandidate={previewCandidate} openStudio={openStudio} notify={notify} />
+          <CandidatesPage previewCandidate={previewCandidate} openStudio={openStudio} editCandidateId={candidateEditId} onEditOpened={() => setCandidateEditId(null)} notify={notify} />
         );
       case 'Onboarding':
         return <OnboardingPage notify={notify} />;
       case 'Jobs & JDs':
         return <JobMatching notify={notify} openStudio={openStudio} applicationView={<JobsPage openStudio={openStudio} openMatching={openMatching} notify={notify} />} />;
       case 'Resume studio':
-        return <ResumeWorkspace initialJobId={studioJobId} onJobChange={setStudioJobId} notify={notify} />;
+        return <ResumeWorkspace initialJobId={studioJobId} onJobChange={setStudioJobId} onCompleteCandidate={id => { setCandidateEditId(id); setActivePage('Candidates'); }} onConfigureAI={() => setActivePage('Platform')} notify={notify} />;
       case 'Resume history':
         return <ResumeHistoryPage openStudio={openStudio} />;
       case 'Intelligence':
