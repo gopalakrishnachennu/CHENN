@@ -43,6 +43,21 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('Matching transactions', (
     await expect(store.importCatalog(user, [input, { ...input, family: 'Invalid' }])).rejects.toThrow('Row 2');
     expect((await getDocs(collection(holder.database, 'catalogJobs'))).size).toBe(0);
   });
+  it('adopts an unreviewed demo row only after eligibility review and keeps the shared JD authoritative', async () => {
+    const candidate = (await getDoc(doc(holder.database, 'candidates', 'a'))).data()!;
+    await setDoc(doc(holder.database, 'candidates', 'demo-candidate-01'), { ...candidate, id: 'demo-candidate-01' });
+    const { normalizeJob } = await import('../lib/matching');
+    await setDoc(doc(holder.database, 'catalogJobs', 'demo-job-01'), { ...normalizeJob(input), id: 'demo-job-01' });
+    await store.runMatching(user);
+    const id = 'demo-job-01_demo-candidate-01';
+    await setDoc(doc(holder.database, 'jobs', id), { id, catalogId: 'demo-job-01', candidateId: 'demo-candidate-01', jdText: 'Old duplicated text', status: 'Selected', appliedAt: null, appliedResumeId: null });
+    const raw = (await getDoc(doc(holder.database, 'jobs', id))).data()!;
+    expect((await store.hydrateJob(raw)).jdText).toBe(input.jdText);
+    expect(await store.decideMatch(user, id, 'Approved', 'Reviewed demo eligibility')).toBe(id);
+    expect((await getDocs(collection(holder.database, 'jobs'))).size).toBe(1);
+    expect((await getDoc(doc(holder.database, 'jobs', id))).data()?.jdText).toBeUndefined();
+    await expect(store.decideMatch(user, id, 'Approved', '')).rejects.toThrow('already has an application');
+  });
   it('reserves paid operations once, reuses completed results and allows explicit retry after failure', async () => {
     const { cachedAIRequest } = await import('../lib/ai-request-store');
     let release!: () => void; let started!: () => void;

@@ -154,7 +154,13 @@ export async function decideMatch(user: User, matchId: string, decision: 'Approv
     if (fresh.decision !== 'Selected' && !reviewReason.trim()) throw new Error('Enter a reason for your review decision.');
     const applicationId = fresh.id;
     const existingApplication = await tx.get(doc(db, 'jobs', applicationId));
-    if (decision === 'Approved' && existingApplication.exists()) throw new Error('An application already exists for this candidate and job.');
+    const existing = existingApplication.data();
+    // The earlier demo loader created unreviewed Selected rows. Review adopts
+    // those rows in place, preserving identity and preventing a second application.
+    const unreviewedDemo = old.jobId.startsWith('demo-job-') && old.candidateId.startsWith('demo-candidate-')
+      && existing?.catalogId === old.jobId && existing?.candidateId === old.candidateId
+      && existing?.status === 'Selected' && !existing?.appliedAt && !existing?.appliedResumeId;
+    if (decision === 'Approved' && existingApplication.exists() && !unreviewedDemo) throw new Error('An application already exists for this candidate and job.');
     const timestamp = new Date().toISOString();
     const next = { ...fresh, reviewedDecision: decision, reviewReason: reviewReason.trim(), reviewedAt: timestamp, reviewedBy: user.email, ...(decision === 'Approved' ? { applicationId } : {}) };
     tx.set(ref, next);
@@ -182,6 +188,8 @@ export async function hydrateJob<T extends { catalogId?: string }>(job: T) {
   const source = await getDoc(doc(db, 'catalogJobs', job.catalogId));
   if (!source.exists()) throw new Error('Shared job description is missing.');
   const catalog = source.data() as CatalogJob;
-  return { ...catalog, targetRole: catalog.role, targetLocation: catalog.location,
-    salary: catalog.salary || (catalog.salaryMax == null ? 'Not listed' : `Up to ${catalog.currency} ${catalog.salaryMax.toLocaleString()}`), ...job };
+  const { id: catalogId, status, createdAt, updatedAt, ...description } = catalog;
+  return { ...job, ...description,
+    targetRole: catalog.role, targetLocation: catalog.location,
+    salary: catalog.salary || (catalog.salaryMax == null ? 'Not listed' : `Up to ${catalog.currency} ${catalog.salaryMax.toLocaleString()}`) };
 }

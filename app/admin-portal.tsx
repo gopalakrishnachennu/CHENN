@@ -1267,8 +1267,8 @@ function JobsPage({
   return (
     <>
       <PageHeading
-        title="Jobs & job descriptions"
-        description="Manage complete JDs, requirement analysis, job-specific resumes, and application status."
+        title="Candidate applications"
+        description="Track each candidate's application and resume status. Browse shared job descriptions in Catalog."
         actions={
           <>
             <Button
@@ -3865,7 +3865,7 @@ export function AdminPortal({
       case 'Onboarding':
         return <OnboardingPage notify={notify} />;
       case 'Jobs & JDs':
-        return <JobsPage openStudio={openStudio} openMatching={openMatching} notify={notify} />;
+        return <JobMatching notify={notify} openStudio={openStudio} applicationView={<JobsPage openStudio={openStudio} openMatching={openMatching} notify={notify} />} />;
       case 'Resume studio':
         return <ResumeWorkspace initialJobId={studioJobId} onJobChange={setStudioJobId} notify={notify} />;
       case 'Resume history':
