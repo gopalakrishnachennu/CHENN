@@ -49,6 +49,14 @@ for (let i = 0; i < 50; i++) {
   const id = `demo-job-${String(i + 1).padStart(2, '0')}`;
   const jdText = `${company} is hiring a ${role}. Build and operate reliable systems using ${skills.slice(0, 3).join(', ')}. Collaborate with engineering teams, improve automation and production quality, and document operational practices. ${skills.slice(3).join(', ')} are preferred.`;
   writes.push(document(`catalogJobs/${id}`, { id, company: `[DEMO] ${company}`, title: `${role} ${i + 1}`, family, role, familyConfidence: 100, mandatorySkills: skills.slice(0, 3), preferredSkills: skills.slice(3), criticalSkills: [skills[0]], seniority: i % 3 === 0 ? 'Senior' : 'Mid-level', minimumYears: i % 3 === 0 ? 6 : 5, location, workType: i % 4 === 0 ? 'Remote' : 'Hybrid', authorization: 'Any', salary: '$120,000–$180,000', salaryMax: 180000, currency: 'USD', source: 'Demo fixture', sourceUrl: `https://example.com/demo-jobs/${id}`, jdText, status: 'Open', expiresAt: new Date(Date.now() + 30 * 86400000).toISOString(), createdAt: now, updatedAt: now }));
+  for (let candidateIndex = 0; candidateIndex < candidateNames.length; candidateIndex++) {
+    if (candidateNames[candidateIndex][2] !== family) continue;
+    const candidateId = `demo-candidate-${String(candidateIndex + 1).padStart(2, '0')}`;
+    const candidateEmail = `${candidateNames[candidateIndex][0].toLowerCase()}.${candidateNames[candidateIndex][1].toLowerCase()}.${candidateIndex + 1}@example.com`;
+    const applicationId = `${id}_${candidateId}`;
+    writes.push(document(`jobs/${applicationId}`, { id: applicationId, catalogId: id, candidateId, company: `[DEMO] ${company}`, title: `${role} ${i + 1}`, location, workType: i % 4 === 0 ? 'Remote' : 'Hybrid', salary: '$120,000–$180,000', source: 'Demo fixture', sourceUrl: `https://example.com/demo-jobs/${id}`, jdText, mandatorySkills: skills.slice(0, 3), preferredSkills: skills.slice(3), targetRole: role, targetLocation: location, family, status: 'Selected', matchScore: 80 + (candidateIndex % 15), discoveredAt: now, appliedAt: null, appliedResumeId: null, createdAt: now, updatedAt: now }));
+    writes.push(document(`candidateCatalogAccess/${candidateEmail}/jobs/${id}`, { candidateId }));
+  }
 }
 const response = await fetch(api, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ writes }) });
 if (!response.ok) throw new Error(`Firestore seed failed (${response.status}): ${await response.text()}`);
