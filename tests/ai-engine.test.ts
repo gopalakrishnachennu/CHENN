@@ -64,7 +64,21 @@ describe('LLM JD analysis and resume writing', () => {
     expect(generated.content.certifications?.join(' ')).toContain('AWS Solutions Architect');
     expect(generated.content.education.join(' ')).toContain('University');
     expect(generated.validation.passed).toBe(true);
+    expect(generated.fallback).toBe(false);
     expect(generated.validation.warnings.length).toBeGreaterThan(0);
+  });
+  it('creates a grounded resume without a second AI call when AI wording fails validation', async () => {
+    const invalid = draft(); invalid.skillCategories[0].skills.push('Terraform');
+    const fetch = vi.fn().mockResolvedValue(response(invalid)); vi.stubGlobal('fetch', fetch);
+    const generated = await writeResumeWithLLM(config, candidate, job, 'Concise');
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(generated.fallback).toBe(true);
+    expect(generated.validation).toMatchObject({ passed: true, errors: [] });
+    expect(generated.validation.warnings.join(' ')).toContain('automatically created this grounded draft');
+    expect(generated.content.skills).toEqual(expect.arrayContaining(['AWS', 'Kubernetes']));
+    expect(generated.content.experience[0]).toMatchObject({ company: 'Real Employer', title: 'Engineer' });
+    expect(generated.content.experience[0].bullets).toContain(candidate.career!.experience[0].responsibilities);
+    expect(generated.evidenceMap.some(item => item.sourceRef === 'family:approved-jd-skills')).toBe(true);
   });
   it('blocks unverified keywords, wrong employer evidence, metrics and duplicate roles', () => {
     const invented = draft(); invented.skillCategories[0].skills.push('Terraform');

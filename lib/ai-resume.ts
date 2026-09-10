@@ -3,7 +3,7 @@ import { structuredAI, type AIConfig } from './ai-client';
 import { careerEvidence, groundedResumeContent, type EvidenceUnit } from './evidence';
 import type { Candidate, ClaimEvidence, Job, ResumeContent } from './types';
 
-export const RESUME_PROMPT_VERSION = 'llm-resume-v1';
+export const RESUME_PROMPT_VERSION = 'llm-resume-v2';
 const claim = z.object({ text: z.string().min(1).max(1200), sourceRefs: z.array(z.string()).min(1).max(20), keywords: z.array(z.string()).max(30) }).strict();
 export const resumeDraftSchema = z.object({
   summary: z.array(claim).min(1).max(5),
@@ -46,6 +46,62 @@ export function familyApprovedResumeSkills(candidate: Candidate, job: Job) {
 }
 export function generationResumeSkills(candidate: Candidate, job: Job) {
   return [...new Map([...allowedResumeSkills(candidate), ...familyApprovedResumeSkills(candidate, job)].map(skill => [norm(skill), skill])).values()];
+}
+
+function groundedSkillCategories(candidate: Candidate, job: Job) {
+  const allowed = new Map(generationResumeSkills(candidate, job).map(skill => [norm(skill), skill]));
+  const used = new Set<string>();
+  const categories: Array<{ category: string; skills: string[] }> = [];
+  const add = (category: string, values: string[]) => {
+    const remaining = values.map(skill => allowed.get(norm(skill))).filter((skill): skill is string => Boolean(skill)).filter(skill => !used.has(norm(skill)));
+    for (let index = 0; index < remaining.length && categories.length < 8; index += 6) {
+      const group = remaining.slice(index, index + 6);
+      group.forEach(skill => used.add(norm(skill)));
+      categories.push({ category: index ? `${category} ${index / 6 + 1}` : category, skills: group });
+    }
+  };
+  const profile = job.jdProfile!;
+  add('Must-have skills', profile.mandatory_skills);
+  add('Required skills', profile.required_skills);
+  add('Tools & technologies', profile.important_tools_technologies);
+  add('Preferred skills', profile.preferred_skills);
+  add('Candidate skills', allowedResumeSkills(candidate));
+  add('Additional JD skills', generationResumeSkills(candidate, job));
+  return categories;
+}
+
+function groundedFallbackResume(candidate: Candidate, job: Job, aiErrors: string[]) {
+  const skillCategories = groundedSkillCategories(candidate, job);
+  const selectedSkills = skillCategories.flatMap(group => group.skills);
+  const targetRole = job.targetRole || job.title;
+  const roles = [...new Set((candidate.career?.experience ?? []).map(role => role.title).filter(Boolean))];
+  const summaryLines = [
+    `${targetRole} professional aligned with the ${job.family} job family.`,
+    selectedSkills.length ? `JD-aligned technical focus: ${selectedSkills.slice(0, 12).join(', ')}.` : '',
+    roles.length ? `Career history includes ${roles.slice(0, 3).join(', ')} roles.` : '',
+  ].filter(Boolean);
+  const base = groundedResumeContent(candidate, job, selectedSkills, summaryLines.join('\n'));
+  const summaryEvidence: ClaimEvidence[] = summaryLines.map((line, index) => ({
+    claimId: `summary:grounded:${index}`,
+    section: 'summary',
+    outputText: line,
+    sourceRef: index === 1 ? 'family:approved-jd-skills' : index === 2 ? 'candidate:career-records' : 'family:approved-assignment',
+    sourceText: index === 1
+      ? `Candidate and job share ${job.family}. Approved JD skills: ${selectedSkills.join(', ')}`
+      : index === 2
+        ? (candidate.career?.experience ?? []).map(role => `${role.title} at ${role.company}`).join('; ')
+        : `Candidate and job share the ${job.family} taxonomy family.`,
+  }));
+  const evidenceMap = [...summaryEvidence, ...base.evidenceMap];
+  const fallbackWarning = 'The AI wording did not pass the final resume check, so ResumeOS automatically created this grounded draft from stored candidate facts and same-family JD skills.';
+  return {
+    content: { ...base.content, skillCategories, highlights: selectedSkills },
+    evidenceMap,
+    validation: { passed: true, errors: [], warnings: [fallbackWarning], claimCount: evidenceMap.length },
+    gaps: [],
+    fallback: true,
+    fallbackReasonCount: aiErrors.length,
+  };
 }
 export function resumeRoles(candidate: Candidate, evidence = resumeEvidence(candidate)) {
   return (candidate.career?.experience ?? []).map((role, index) => ({ ...role, experienceIndex: index }))
@@ -121,7 +177,10 @@ export async function writeResumeWithLLM(config: AIConfig, candidate: Candidate,
     roles: roles.map(r => ({ experienceIndex: r.experienceIndex, company: r.company, title: r.title, bullet_count: r.bullet_count })), custom_style: customStyle,
   }, 16000);
   const validation = validateResumeDraft(result.value, candidate, job);
-  if (!validation.passed) throw new Error(`AI draft failed validation: ${validation.errors.slice(0, 5).join(' ')} Nothing was saved. Review evidence before retrying.`);
+  if (!validation.passed) {
+    const fallback = groundedFallbackResume(candidate, job, validation.errors);
+    return { ...fallback, usage: result.usage, promptVersion: RESUME_PROMPT_VERSION };
+  }
   const draft = result.value;
   const base = groundedResumeContent(candidate, job, draft.skillCategories.flatMap(c => c.skills), draft.summary.map(s => s.text).join('\n'));
   const content: ResumeContent = { ...base.content, skillCategories: draft.skillCategories,
@@ -132,7 +191,7 @@ export async function writeResumeWithLLM(config: AIConfig, candidate: Candidate,
   };
   return { content, evidenceMap: [...validation.evidenceMap, ...base.evidenceMap.filter(e => e.section !== 'experience')],
     validation: { ...validation, warnings: [...validation.warnings, 'Review AI wording against the cited evidence before approving. Evidence references do not prove semantic accuracy.'] },
-    usage: result.usage, gaps: draft.gaps, promptVersion: RESUME_PROMPT_VERSION };
+    usage: result.usage, gaps: draft.gaps, promptVersion: RESUME_PROMPT_VERSION, fallback: false, fallbackReasonCount: 0 };
 }
 
 export function validateAIResumeEdit(content: ResumeContent, parent: ResumeContent, evidenceMap: ClaimEvidence[]) {

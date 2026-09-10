@@ -1044,21 +1044,22 @@ export async function runFirebaseAction(
           id, candidateId: candidate.id, jobId, parentId: counter.data()?.lastId || versions.sort((a, b) => b.version - a.version)[0]?.id || null,
           version, content: generated.content, skillPlan: plan,
           scores: { jdMatch: calculateMatch(plan), ats: 0, recruiterSafe: 0, evidence: generated.validation.passed ? 100 : 0 },
-          template, status: 'Ready for review', engine: 'openai-resume-v1', evidenceMap: generated.evidenceMap, validation: { passed: generated.validation.passed, errors: generated.validation.errors, warnings: generated.validation.warnings, claimCount: generated.validation.claimCount },
+          template, status: 'Ready for review', engine: generated.fallback ? 'grounded-fallback-v1' : 'openai-resume-v1', evidenceMap: generated.evidenceMap, validation: { passed: generated.validation.passed, errors: generated.validation.errors, warnings: generated.validation.warnings, claimCount: generated.validation.claimCount },
           aiMetadata: { promptVersion: generated.promptVersion, usage: generated.usage, gaps: generated.gaps, factualReviewRequired: true },
           generationSnapshot: { jdHash: job.jdHash, analysisVersion: job.analysisVersion, candidateSourceHash, candidateUpdatedAt: candidate.updatedAt, jobUpdatedAt: job.updatedAt, ...(job.catalogId ? { catalogId: job.catalogId } : {}), matchPolicyVersion: 'family-eligibility-v2', ...(activePrompt ? { promptId: activePrompt.id, promptVersion: activePrompt.version } : {}), model, template, inputHash },
           createdAt: now(), approvedAt: null, candidateVisible: false,
         };
         tx.set(doc(firebaseDb, 'resumes', id), resume);
         tx.set(counterRef, { version, lastId: id });
-        tx.set(doc(firebaseDb, 'events', crypto.randomUUID()), { jobId, candidateId: candidate.id, eventType: 'resume_generated', title: 'AI resume generated', detail: `Version ${version} · cached JD profile`, createdAt: now() });
+        tx.set(doc(firebaseDb, 'events', crypto.randomUUID()), { jobId, candidateId: candidate.id, eventType: 'resume_generated', title: generated.fallback ? 'Grounded resume generated' : 'AI resume generated', detail: `Version ${version} · ${generated.fallback ? 'safe automatic fallback' : 'cached JD profile'}`, createdAt: now() });
       });
-      await audit(actorEmail, 'resume.generated', 'resume', id, { jobId, inputHash, model, usage: generated.usage });
+      await audit(actorEmail, 'resume.generated', 'resume', id, { jobId, inputHash, model, engine: generated.fallback ? 'grounded-fallback-v1' : 'openai-resume-v1', fallbackReasonCount: generated.fallbackReasonCount, usage: generated.usage });
       return { resumeId: id };
     });
     const stored = await getDoc(doc(firebaseDb, 'resumes', result.resumeId));
     if (!stored.exists()) throw new Error('The cached resume was removed. Update candidate evidence or prompt before regenerating.');
-    return { ok: true, message: 'AI resume ready for factual review. Unchanged inputs reuse the existing version.', resume: stored.data() as ResumeVersion, mode: 'openai' };
+    const storedResume = stored.data() as ResumeVersion;
+    return { ok: true, message: storedResume.engine === 'grounded-fallback-v1' ? 'Resume ready for review. AI wording was automatically replaced with a grounded draft.' : 'AI resume ready for factual review. Unchanged inputs reuse the existing version.', resume: storedResume, mode: storedResume.engine === 'grounded-fallback-v1' ? 'grounded-fallback' : 'openai' };
   }
 
   if (action === 'resume.edit') {
