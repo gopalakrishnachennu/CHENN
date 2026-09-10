@@ -24,7 +24,6 @@ const requiredActions = [
   'candidate.archive',
   'candidate.delete',
   'candidate.skills.replace',
-  'candidate.qualifications.confirm',
   'job.create',
   'job.update',
   'job.status',

@@ -128,16 +128,6 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('Matching transactions', (
     await expect(setDoc(doc(candidateDb, 'aiRequests', 'fake'), { status: 'ready' })).rejects.toThrow();
     await expect(setDoc(doc(candidateDb, 'resumeCounters', 'fake'), { version: 100 })).rejects.toThrow();
   });
-  it('persists confirmed qualifications with audit provenance and blocks unconfirmed requests', async () => {
-    const { runFirebaseAction } = await import('../lib/firebase-backend');
-    const items = [{ kind: 'skill', name: 'Python', evidence: 'Candidate demonstrated Python scripts' }];
-    await expect(runFirebaseAction(user, 'candidate.qualifications.confirm', { candidateId: 'a', items })).rejects.toThrow('Confirm');
-    await runFirebaseAction(user, 'candidate.qualifications.confirm', { candidateId: 'a', items, confirmed: true });
-    const record = (await getDoc(doc(holder.database, 'candidates', 'a'))).data()!;
-    expect(record.skills.some((skill: { name: string }) => skill.name === 'Python')).toBe(true);
-    expect(record.qualificationConfirmations[0].confirmedBy).toBe(user.email);
-    expect((await getDocs(collection(holder.database, 'logs'))).size).toBe(1);
-  });
   it('requires factual review before approving an AI resume', async () => {
     const { runFirebaseAction } = await import('../lib/firebase-backend');
     await setDoc(doc(holder.database, 'resumes', 'ai-draft'), { id: 'ai-draft', candidateId: 'a', jobId: 'application', aiMetadata: { factualReviewRequired: true }, validation: { passed: true } });

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { structuredAI } from '../lib/ai-client';
 import { aiJDHash, analyzeJDWithLLM } from '../lib/ai-jd';
 import { createJDProfile } from '../lib/jd-profile';
-import { allowedResumeSkills, validateAIResumeEdit, validateResumeDraft, writeResumeWithLLM, type ResumeDraft } from '../lib/ai-resume';
+import { allowedResumeSkills, familyApprovedResumeSkills, generationResumeSkills, validateAIResumeEdit, validateResumeDraft, writeResumeWithLLM, type ResumeDraft } from '../lib/ai-resume';
 import { confirmQualifications } from '../lib/qualification-confirmation';
 import { highlightRuns } from '../lib/resume-format';
 import { careerSchema } from '../lib/career';
@@ -12,7 +12,7 @@ import type { Candidate, Job } from '../lib/types';
 const config = { key: 'test-key-not-a-secret', model: 'configured-model' };
 const posting = { title: 'Platform Engineer', company: 'Acme', family: 'DevOps', jdText: 'UNIQUE RAW JD SENTINEL\nAWS is mandatory.\nKubernetes preferred.' };
 const profile = createJDProfile(posting, 'hash');
-const candidate = { id: 'c', name: 'Alex Smith', email: 'alex@example.com', phone: '555-0100', location: 'Boston', skills: [], career: careerSchema.parse({
+const candidate = { id: 'c', name: 'Alex Smith', email: 'alex@example.com', phone: '555-0100', location: 'Boston', family: 'DevOps', skills: [], career: careerSchema.parse({
   experience: [{ company: 'Real Employer', title: 'Engineer', start: '2020-01', end: '', current: true, location: 'Boston', technologies: 'AWS', responsibilities: 'Built AWS infrastructure supporting internal services through reusable modules and documented workflows, helping team members deploy workloads consistently across approved environments.', achievements: '' }],
   education: [{ institution: 'University', degree: 'BS', field: 'Computing', start: '2016-01', end: '2020-01' }],
   certifications: [{ name: 'AWS Solutions Architect', issuer: 'Amazon', start: '', end: '', url: '' }], projects: [],
@@ -67,16 +67,28 @@ describe('LLM JD analysis and resume writing', () => {
     expect(generated.validation.warnings.length).toBeGreaterThan(0);
   });
   it('blocks unverified keywords, wrong employer evidence, metrics and duplicate roles', () => {
-    const invented = draft(); invented.skillCategories[0].skills.push('Kubernetes');
+    const invented = draft(); invented.skillCategories[0].skills.push('Terraform');
     expect(validateResumeDraft(invented, candidate, job).passed).toBe(false);
     const metric = draft(); metric.experience[0].bullets[0].text += ' Improved performance by 70%.';
     expect(validateResumeDraft(metric, candidate, job).errors.join(' ')).toContain('metric 70%');
     const wrong = draft(); wrong.experience[0].bullets[0].sourceRefs = ['education:0'];
     expect(validateResumeDraft(wrong, candidate, job).errors.join(' ')).toContain('another employer');
-    const concealed = draft(); concealed.summary[0].text = 'Expert in Kubernetes'; concealed.summary[0].keywords = [];
-    expect(validateResumeDraft(concealed, candidate, job).passed).toBe(false);
+    const concealed = draft(); concealed.summary[0].text = 'Certified in CKA'; concealed.summary[0].keywords = [];
+    const certificationJob = { ...job, jdProfile: { ...job.jdProfile!, mandatory_certifications: ['CKA'] } };
+    expect(validateResumeDraft(concealed, candidate, certificationJob).passed).toBe(false);
     const duplicate = draft(); duplicate.experience.push(duplicate.experience[0]);
     expect(validateResumeDraft(duplicate, candidate, job).passed).toBe(false);
+  });
+  it('allows same-family JD skills in summary and skills, but not unsupported employer claims', () => {
+    expect(familyApprovedResumeSkills(candidate, job)).toContain('Kubernetes');
+    expect(generationResumeSkills(candidate, job)).toEqual(expect.arrayContaining(['AWS', 'Kubernetes']));
+    const aligned = draft();
+    aligned.summary[0] = { text: 'DevOps engineer aligned with Kubernetes environments.', sourceRefs: ['experience:0:0'], keywords: ['Kubernetes'] };
+    aligned.skillCategories[0].skills.push('Kubernetes');
+    expect(validateResumeDraft(aligned, candidate, job).passed).toBe(true);
+    aligned.experience[0].bullets[0].text = 'Built Kubernetes platforms for production teams using reusable modules and documented workflows, helping engineers deploy workloads consistently across approved environments with reliable operational practices.';
+    aligned.experience[0].bullets[0].keywords = ['Kubernetes'];
+    expect(validateResumeDraft(aligned, candidate, job).errors.join(' ')).toContain('employer evidence does not support Kubernetes');
   });
   it('does not permit changed education or unverified skill edits', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(draft())));

@@ -24,7 +24,6 @@ import { autoAssignFamilyMatches, hydrateJob, ensureCatalogProfile, cachedJDProf
 import { adminAIKey } from './ai-client';
 import { writeResumeWithLLM, validateAIResumeEdit, candidateGenerationFacts, RESUME_PROMPT_VERSION } from './ai-resume';
 import { cachedAIRequest } from './ai-request-store';
-import { confirmQualifications } from './qualification-confirmation';
 import { careerSchema, emptyCareer } from './career';
 import {
   careerEvidence,
@@ -795,20 +794,6 @@ export async function runFirebaseAction(
       { count: skills.length },
     );
     return { ok: true, message: `${skills.length} profile skills saved.` };
-  }
-
-  if (action === 'candidate.qualifications.confirm') {
-    const candidateId = required(payload, 'candidateId');
-    if (payload.confirmed !== true) throw new Error('Confirm that the candidate holds these qualifications.');
-    const candidateRef = doc(firebaseDb, 'candidates', candidateId);
-    await runTransaction(firebaseDb, async tx => {
-      const current = await tx.get(candidateRef);
-      if (!current.exists()) throw new Error('Candidate not found.');
-      const updated = confirmQualifications(current.data() as Candidate, payload.items, actorEmail, timestamp);
-      tx.update(candidateRef, updated);
-      tx.set(doc(firebaseDb, 'logs', crypto.randomUUID()), { actorEmail, action: 'candidate.qualifications.confirmed', entityType: 'candidate', entityId: candidateId, createdAt: timestamp, details: { count: (payload.items as unknown[]).length } });
-    });
-    return { ok: true, message: 'Qualifications confirmed. They are now available for matching and resume generation.' };
   }
 
   if (action === 'job.create' || action === 'job.update') {
