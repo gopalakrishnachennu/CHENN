@@ -1,6 +1,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { verifyRelease } from './verify-release.mjs';
 
 // Production pushes authorize releases; automated checks must still pass.
 if (process.env.GITHUB_ACTIONS !== 'true' || !process.env.DEPLOYMENT_ID || process.env.GITHUB_REF !== 'refs/heads/prod') {
@@ -45,9 +46,7 @@ try {
   record.status = 'deploying'; save();
   run('firebase', ['deploy', '--only', record.scope, '--project', 'chennu4169', '--non-interactive', '--message', `commit=${commit} run=${process.env.GITHUB_RUN_ID} deployment=${record.deploymentId}`]);
   record.status = 'verifying'; save();
-  const response = await fetch(`https://chenn.web.app/release.json?deployment=${record.deploymentId}`, { signal: AbortSignal.timeout(20000), cache: 'no-store' });
-  const published = await response.json();
-  if (!response.ok || published.commit !== commit || published.deploymentId !== record.deploymentId) throw new Error('Published release identity could not be verified. Inspect Firebase; deployment may have succeeded.');
+  await verifyRelease(record.target, { commit, deploymentId: record.deploymentId });
   record.status = 'success';
 } catch (error) {
   record.failedDuring = record.status;
