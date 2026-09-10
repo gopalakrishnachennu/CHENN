@@ -8,7 +8,8 @@ const evaluate = (j = job, c = candidate) => evaluateMatch(j, c, new Date('2026-
 describe('Family + eligibility + score', () => {
   it('selects an evidenced eligible candidate', () => { expect(evaluate()).toMatchObject({ score: 100, eligibility: 'Eligible', decision: 'Selected' }); });
   it('blocks a critical requirement regardless of adjacent skills', () => { expect(evaluate(job, { ...candidate, skills: candidate.skills.filter(s => s.name !== 'AWS') })).toMatchObject({ decision: 'Rejected', eligibility: 'Ineligible', missingMandatory: ['AWS'] }); });
-  it('requires evidence; family enrichment cannot masquerade as verified experience', () => { expect(evaluate(job, { ...candidate, skills: candidate.skills.map(s => ({ ...s, evidence: '' })) }).decision).toBe('Rejected'); });
+  it('accepts entered profile skills without requiring evidence notes', () => { expect(evaluate(job, { ...candidate, skills: candidate.skills.map(s => ({ ...s, evidence: '' })) }).decision).toBe('Selected'); });
+  it('keeps JD-only skills separate from candidate qualifications', () => { expect(evaluate(job, { ...candidate, skills: candidate.skills.map(s => ({ ...s, source: 'JD' })) }).decision).toBe('Rejected'); });
   it('accepts an explicitly approved secondary family', () => { expect(evaluate(job, { ...candidate, family: 'Cloud', matchPreferences: { ...candidate.matchPreferences!, secondaryFamilies: ['DevOps'] } }).decision).toBe('Selected'); });
   it.each(['location', 'workType', 'authorization', 'seniority'] as const)('blocks incompatible %s', key => { expect(evaluate({ ...job, [key]: 'Incompatible' }).eligibility).toBe('Ineligible'); });
   it('reviews missing eligibility data rather than treating it as a pass', () => { expect(evaluate(job, { ...candidate, matchPreferences: undefined }).decision).not.toBe('Selected'); });

@@ -31,7 +31,7 @@ const norm = (value: string) => {
 };
 export function resumeEvidence(candidate: Candidate): EvidenceUnit[] {
   const career = careerEvidence(candidate.career);
-  return [...career, ...(candidate.skills ?? []).filter(s => ['Profile', 'Career'].includes(s.source) && s.evidence.trim()).map(s => ({ id: `skill:${s.id || norm(s.name)}`, kind: 'skill' as const, label: s.name, text: `${s.name}: ${s.evidence}`, skills: [s.name] }))];
+  return [...career, ...(candidate.skills ?? []).filter(s => ['Profile', 'Career'].includes(s.source)).map(s => ({ id: `skill:${s.id || norm(s.name)}`, kind: 'skill' as const, label: s.name, text: s.evidence?.trim() ? `${s.name}: ${s.evidence}` : `Candidate profile lists ${s.name}.`, skills: [s.name] }))];
 }
 export function allowedResumeSkills(candidate: Candidate) {
   return [...new Map(resumeEvidence(candidate).flatMap(e => e.skills).filter(Boolean).map(skill => [norm(skill), skill])).values()];

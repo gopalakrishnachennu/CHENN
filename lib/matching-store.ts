@@ -39,6 +39,7 @@ export async function ensureCatalogProfile(user: User, jobId: string, model?: st
     const snapshot = await getDoc(ref);
     if (!snapshot.exists()) throw new Error('Shared job no longer exists.');
     const job = { ...snapshot.data(), id: jobId } as CatalogJob;
+    if (job.analysisStatus === 'Pending') throw new Error('Analyze this saved job and assign its family before resume generation.');
     const sourceHash = await jdFingerprint(job);
     const current = model ? job.analysisVersion === AI_JD_VERSION && job.analysisModel === model : [ANALYSIS_VERSION, AI_JD_VERSION].includes(job.analysisVersion || '');
     if (job.jdProfile && job.intelligence && current && (job.sourceHash || job.jdHash) === sourceHash) return job;
@@ -67,8 +68,9 @@ async function recalculateMatches(user: User) {
   const [data, candidateDocs] = await Promise.all([readMatchingDataRaw(), getDocs(collection(db, 'candidates'))]);
   const candidates = candidateDocs.docs.map(d => ({ ...d.data(), id: d.id }) as Candidate);
   let count = 0;
-  await Promise.all(data.jobs.map(job => ensureCatalogProfile(user, job.id)));
-  for (const job of data.jobs) for (const candidate of candidates) {
+  const readyJobs = data.jobs.filter(job => job.analysisStatus !== 'Pending');
+  await Promise.all(readyJobs.map(job => ensureCatalogProfile(user, job.id)));
+  for (const job of readyJobs) for (const candidate of candidates) {
     await runTransaction(db, async tx => {
       const ref = doc(db, 'jobMatches', `${job.id}_${candidate.id}`);
       const [previous, freshJob, freshCandidate] = await Promise.all([tx.get(ref), tx.get(doc(db, 'catalogJobs', job.id)), tx.get(doc(db, 'candidates', candidate.id))]);
@@ -88,16 +90,16 @@ export async function readMatchingData(user: User) {
 function requireAdmin(user: User) {
   if (!user.emailVerified || user.email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) throw new Error('Verified administrator access required.');
 }
-export async function importCatalog(user: User, rows: Record<string, unknown>[]) {
+export async function importCatalog(user: User, rows: Record<string, unknown>[], pendingAnalysis = false) {
   requireAdmin(user);
   if (!rows.length || rows.length > 100) throw new Error('Import between 1 and 100 jobs.');
   const families = (await getDocs(collection(db, 'families'))).docs.map(d => ({ ...d.data(), id: d.id }) as JobFamily).filter(family => family.active);
   const familyNames = families.map(family => family.name);
   const normalized = await Promise.all(rows.map(async (row, index) => {
     try {
-      const classified = row.family ? null : classifyJobFamily(row, families);
+      const classified = pendingAnalysis || row.family ? null : classifyJobFamily(row, families);
       if (classified && classified.confidence < 80) throw new Error('Job family could not be classified confidently. Choose a family before import.');
-      const job = normalizeJob({ ...row, workType: row.workType || 'Not specified', ...(classified ? { family: classified.family, familyConfidence: classified.confidence } : {}) }, undefined, true);
+      const job = normalizeJob({ ...row, workType: row.workType || 'Not specified', ...(pendingAnalysis ? { family: 'Custom / needs review', familyConfidence: 0, mandatorySkills: [], criticalSkills: [], preferredSkills: [] } : {}), ...(classified ? { family: classified.family, familyConfidence: classified.confidence } : {}) }, undefined, true);
       if (!familyNames.includes(job.family) && job.family !== 'Custom / needs review') throw new Error('Choose an active family.');
       return { ...job, id: await catalogId(job) };
     }
@@ -105,27 +107,27 @@ export async function importCatalog(user: User, rows: Record<string, unknown>[])
   }));
   let added = 0;
   for (const job of normalized) {
-    const cached = await cachedJDProfile(user, job);
+    const cached = pendingAnalysis ? null : await cachedJDProfile(user, job);
     const created = await runTransaction(db, async tx => {
       const ref = doc(db, 'catalogJobs', job.id); const existing = await tx.get(ref);
       if (existing.exists()) return false;
-      tx.set(ref, { ...job, ...profileFields(cached) }); return true;
+      tx.set(ref, { ...job, ...(cached ? profileFields(cached) : {}), analysisStatus: pendingAnalysis ? 'Pending' : 'Ready' }); return true;
     });
     if (created) added++;
   }
   return { added, duplicates: rows.length - added };
 }
-export async function saveCatalogJob(user: User, job: CatalogJob) {
+export async function saveCatalogJob(user: User, job: CatalogJob, pendingAnalysis = false) {
   requireAdmin(user); const normalized = normalizeJob(job, undefined, true);
   const current = await getDoc(doc(db, 'catalogJobs', job.id));
   if (!current.exists()) throw new Error('Shared job no longer exists.');
   const allowed = (await getDocs(collection(db, 'families'))).docs.filter(d => d.data().active).map(d => d.data().name);
   if (!allowed.includes(normalized.family) && normalized.family !== 'Custom / needs review') throw new Error('Choose an active family.');
   // Identity fields define deduplication. Keep them stable for existing applications.
-  if (await catalogId(normalized) !== job.id) throw new Error('Company, title and location identify a shared job. Import a new vacancy to change these fields.');
-  const cached = await cachedJDProfile(user, normalized);
-  await setDoc(doc(db, 'catalogJobs', job.id), { ...normalized, ...profileFields(cached), id: job.id });
-  await runMatching(user);
+  if (await catalogId(normalized) !== await catalogId(current.data() as CatalogJob)) throw new Error('Company, title and location identify a shared job. Import a new vacancy to change these fields.');
+  if (!pendingAnalysis && normalized.family === 'Custom / needs review') throw new Error('Assign an active job family before completing analysis.');
+  const cached = pendingAnalysis ? null : await cachedJDProfile(user, normalized);
+  await setDoc(doc(db, 'catalogJobs', job.id), { ...normalized, ...(cached ? profileFields(cached) : {}), analysisStatus: pendingAnalysis ? 'Pending' : 'Ready', id: job.id });
 }
 export async function savePreferences(user: User, candidateId: string, input: Parameters<typeof preferences>[0]) {
   requireAdmin(user);

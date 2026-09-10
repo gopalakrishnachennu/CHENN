@@ -26,6 +26,20 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('Matching transactions', (
     for (const id of ['a', 'b']) await setDoc(doc(holder.database, 'candidates', id), { id, name: id, firstName: id, lastName: 'Test', phone: '555-0100', location: 'Remote', family: 'DevOps', email: `${id}@example.com`, portalEnabled: true, status: 'Active', skills: [{ name: 'AWS', source: 'Profile', evidence: 'Verified work' }], matchPreferences: preferences({ targetRoles: ['Engineer'], locations: ['Remote'], workTypes: ['Remote'], authorizations: ['US authorized'], seniorities: ['Senior'], yearsExperience: 5 }) });
   });
   afterAll(async () => { await environment.cleanup(); });
+  it('saves raw jobs before analysis and only matches after family review', async () => {
+    const raw = { ...input, family: '', workType: '' };
+    expect(await store.importCatalog(user, [raw], true)).toEqual({ added: 1, duplicates: 0 });
+    const saved = (await store.readMatchingData(user)).jobs[0];
+    expect(saved.analysisStatus).toBe('Pending');
+    expect(saved.jdText).toBe(input.jdText);
+    expect(saved.jdProfile).toBeUndefined();
+    expect((await getDocs(collection(holder.database, 'jdProfiles'))).size).toBe(0);
+    expect(await store.runMatching(user)).toBe(0);
+    await store.saveCatalogJob(user, { ...saved, ...input, familyConfidence: 100 });
+    expect((await store.readMatchingData(user)).jobs[0].analysisStatus).toBe('Ready');
+    expect(await store.runMatching(user)).toBe(2);
+    expect(await store.importCatalog(user, [raw], true)).toEqual({ added: 0, duplicates: 1 });
+  });
   it('loads 50 shared jobs without generating matches, profiles or expiring records on navigation', async () => {
     await Promise.all(Array.from({ length: 50 }, (_, i) => setDoc(doc(holder.database, 'catalogJobs', `read-test-${i}`), { ...input, id: `read-test-${i}`, status: 'Open', expiresAt: '2000-01-01' })));
     const first = await store.readMatchingData(user);

@@ -23,6 +23,7 @@ export type CatalogJob = {
   sourceHash?: string;
   analysisModel?: string;
   analysisVersion?: string;
+  analysisStatus?: 'Pending' | 'Ready';
   jdProfile?: import('./jd-profile').JDProfile;
 };
 export type JobMatch = {
@@ -89,6 +90,7 @@ export function evaluateMatch(job: CatalogJob, candidate: Candidate, at = new Da
   if (candidateGaps.length) uncertain.push(`Candidate profile incomplete: ${candidateGaps.join(', ')}.`);
   const inList = (list: string[], value: string) => list.some(x => canonical(x) === canonical(value));
   if (candidate.status !== 'Active') blocked.push('Candidate is not active.');
+  if (job.analysisStatus === 'Pending') blocked.push('Job is saved; analyze and assign its family before matching.');
   if (job.status !== 'Open' || Date.parse(job.expiresAt) <= at.getTime()) blocked.push('Job is closed or expired.');
   if (!inList([candidate.family, ...p.secondaryFamilies], job.family)) blocked.push('Job family is not approved for this candidate.');
   if (job.familyConfidence < 80) uncertain.push('Family classification requires review.');
@@ -107,10 +109,10 @@ export function evaluateMatch(job: CatalogJob, candidate: Candidate, at = new Da
     if (job.salaryMax == null || job.currency !== p.currency) uncertain.push('Salary needs confirmation.');
     else if (job.salaryMax < p.minimumSalary) blocked.push('Salary is below candidate minimum.');
   }
-  const verified = (candidate.skills ?? []).filter(x => ['Profile', 'Career'].includes(x.source) && x.evidence.trim()).map(x => canonical(x.name));
+  const verified = (candidate.skills ?? []).filter(x => ['Profile', 'Career'].includes(x.source)).map(x => canonical(x.name));
   const missing = [...new Set([...job.mandatorySkills, ...job.criticalSkills])].filter(x => !verified.includes(canonical(x)));
   if (job.criticalSkills.some(x => !verified.includes(canonical(x)))) blocked.push('Missing a critical mandatory skill.');
-  else if (missing.length) uncertain.push('Mandatory skills require evidence review.');
+  else if (missing.length) uncertain.push('Some mandatory skills are not listed in the candidate profile.');
   const ratio = (list: string[]) => list.length ? list.filter(x => verified.includes(canonical(x))).length / list.length * 100 : 100;
   if (!job.mandatorySkills.length && !job.preferredSkills.length) uncertain.push('JD skill requirements need review.');
   const requirements = job.requirements;

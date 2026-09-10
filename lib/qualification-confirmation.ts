@@ -4,7 +4,7 @@ import type { Candidate } from './types';
 
 export const confirmationSchema = z.object({
   kind: z.enum(['skill', 'certification']), name: z.string().trim().min(1).max(150),
-  evidence: z.string().trim().min(5).max(3000), issuer: z.string().trim().max(150).default(''),
+  evidence: z.string().trim().max(3000).default(''), issuer: z.string().trim().max(150).default(''),
   experienceIndex: z.number().int().min(0).nullable().default(null),
 }).strict().refine(v => v.kind !== 'certification' || !!v.issuer, 'Enter the certification issuer.');
 export function confirmQualifications(candidate: Candidate, input: unknown, actor: string, timestamp: string) {

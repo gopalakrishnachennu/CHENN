@@ -73,7 +73,7 @@ function makeRequirement(id: string, text: string, canonical: string, kind: Requ
   const suggestedSections = ['skill', 'tool', 'platform', 'methodology'].includes(kind) ? (classification === 'Mandatory' || classification === 'Required' ? ['Professional Summary', 'Technical Skills', 'Experience'] : ['Technical Skills', 'Experience']) : kind === 'responsibility' ? ['Experience'] : ['Qualifications'];
   return { id, text, canonical, kind, classification, explicit: true, confidence: 1, importance, atsWeight: Math.min(100, base + Math.min(8, frequency * 2)), frequency, suggestedSections, synonyms, reason: `${classification} language and JD context.` };
 }
-function yearsFrom(jd: string) { return [...jd.matchAll(/(\d{1,2})\s*\+?\s*(?:years?|yrs?)(?:\s+of)?\s+(?:professional\s+)?experience/gi)].map(m => Number(m[1])).filter(Number.isFinite); }
+function yearsFrom(jd: string) { return [...jd.matchAll(/(\d{1,2})\s*\+?\s*(?:years?|yrs?)(?:\s+of)?\s+(?:(?:professional|hands[- ]on|relevant|technical)\s+)?experience/gi)].map(m => Number(m[1])).filter(Number.isFinite); }
 function detectSeniority(title: string, jd: string, minimumYears: number | null) {
   const text = `${title} ${jd}`;
   if (/\b(chief|head|director|vp|vice president)\b/i.test(text)) return 'Leadership';
@@ -87,7 +87,7 @@ function detectDomain(jd: string) { return ([['Fintech', /\bfintech|financial se
 
 function candidateEvidence(candidate?: Candidate) {
   if (!candidate) return [] as Array<{ ref: string; text: string }>;
-  return [...careerEvidence(candidate.career).map(unit => ({ ref: unit.id, text: `${unit.label} ${unit.text} ${unit.skills.join(' ')}` })), ...(candidate.skills ?? []).filter(skill => skill.evidence.trim()).map(skill => ({ ref: skill.evidenceRefs?.[0] ?? `skill:${skill.id}`, text: `${skill.name} ${skill.evidence}` }))];
+  return [...careerEvidence(candidate.career).map(unit => ({ ref: unit.id, text: `${unit.label} ${unit.text} ${unit.skills.join(' ')}` })), ...(candidate.skills ?? []).filter(skill => ['Profile', 'Career'].includes(skill.source)).map(skill => ({ ref: skill.evidenceRefs?.[0] ?? `skill:${skill.id}`, text: `${skill.name} ${skill.evidence}` }))];
 }
 function refsFor(term: string, evidence: Array<{ ref: string; text: string }>, synonyms: string[] = []) { return unique(evidence.filter(item => [term, ...synonyms].some(value => contains(item.text, value))).map(item => item.ref)); }
 function coverageDimension(items: JDRequirement[], evidence: Array<{ ref: string; text: string }>, target: number | null): CoverageDimension {

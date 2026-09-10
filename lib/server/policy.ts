@@ -61,7 +61,7 @@ export function buildSkillPlan(
 ): SkillPlanItem[] {
   const profile = new Map(
     candidateSkills
-      .filter((skill) => ['Profile', 'Career'].includes(skill.source) && skill.evidence.trim())
+      .filter((skill) => ['Profile', 'Career'].includes(skill.source))
       .map((skill) => [normalizeSkill(skill.name), skill]),
   );
   const familySkills = new Set((family?.skills ?? []).map(normalizeSkill));

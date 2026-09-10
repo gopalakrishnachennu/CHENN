@@ -51,7 +51,7 @@ describe('OpenAI request contract', () => {
 describe('LLM JD analysis and resume writing', () => {
   it('creates an LLM profile and changes cache identity with model/source', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(profile.jdProfile)));
-    expect(await analyzeJDWithLLM(config, posting)).toMatchObject({ engine: 'openai', analysisVersion: 'llm-jd-v1', model: config.model });
+    expect(await analyzeJDWithLLM(config, posting)).toMatchObject({ engine: 'openai', analysisVersion: 'llm-jd-v2', model: config.model });
     expect((await aiJDHash(posting, 'model-b')).hash).not.toBe((await aiJDHash(posting, config.model)).hash);
     expect((await aiJDHash({ ...posting, jdText: 'Changed JD' }, config.model)).hash).not.toBe((await aiJDHash(posting, config.model)).hash);
   });
@@ -86,8 +86,10 @@ describe('LLM JD analysis and resume writing', () => {
   });
 });
 describe('Candidate qualification confirmations and formatting', () => {
-  it('requires evidence and issuer; general skills never become employer history', () => {
-    expect(() => confirmQualifications(candidate, [{ kind: 'skill', name: 'Python', evidence: '' }], 'admin', 'now')).toThrow();
+  it('accepts optional notes and requires issuer; general skills never become employer history', () => {
+    const entered = confirmQualifications(candidate, [{ kind: 'skill', name: 'Python', evidence: '' }], 'admin', 'now');
+    expect(allowedResumeSkills({ ...candidate, ...entered })).toContain('Python');
+    expect(entered.career.experience).toEqual(candidate.career!.experience);
     expect(() => confirmQualifications(candidate, [{ kind: 'certification', name: 'CKA', evidence: 'Candidate confirmed credential' }], 'admin', 'now')).toThrow();
     const updated = confirmQualifications(candidate, [{ kind: 'skill', name: 'Python', evidence: 'Candidate demonstrated a Python project' }, { kind: 'certification', name: 'CKA', issuer: 'CNCF', evidence: 'Credential reviewed with candidate' }], 'admin', 'now');
     expect(updated.career.experience).toEqual(candidate.career!.experience);
