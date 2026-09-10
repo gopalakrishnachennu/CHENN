@@ -69,7 +69,6 @@ async function recalculateMatches(user: User) {
   const candidates = candidateDocs.docs.map(d => ({ ...d.data(), id: d.id }) as Candidate);
   let count = 0;
   const readyJobs = data.jobs.filter(job => job.analysisStatus !== 'Pending');
-  await Promise.all(readyJobs.map(job => ensureCatalogProfile(user, job.id)));
   for (const job of readyJobs) for (const candidate of candidates) {
     await runTransaction(db, async tx => {
       const ref = doc(db, 'jobMatches', `${job.id}_${candidate.id}`);
@@ -85,7 +84,17 @@ export async function readMatchingData(user: User) {
   requireAdmin(user);
   // Navigation is read-only. Recalculation belongs to explicit matching actions;
   // never hold the catalog hostage to one transaction per job/candidate pair.
-  return withReadTimeout(readMatchingDataRaw());
+  return withReadTimeout((async () => {
+    const [data, candidates] = await Promise.all([readMatchingDataRaw(), getDocs(collection(db, 'candidates'))]);
+    const byId = new Map(candidates.docs.map(d => [d.id, { ...d.data(), id: d.id } as Candidate]));
+    const jobs = new Map(data.jobs.map(job => [job.id, job]));
+    // Apply current policy in memory so historical scores never survive a policy change.
+    data.matches = data.matches.flatMap(old => {
+      const job = jobs.get(old.jobId); const candidate = byId.get(old.candidateId);
+      return job && candidate ? [{ ...old, ...evaluateMatch(job, candidate) }] : [];
+    });
+    return data;
+  })());
 }
 function requireAdmin(user: User) {
   if (!user.emailVerified || user.email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) throw new Error('Verified administrator access required.');
@@ -153,7 +162,7 @@ export async function decideMatch(user: User, matchId: string, decision: 'Approv
     if (!j.exists() || !c.exists()) throw new Error('Job or candidate no longer exists.');
     const fresh = evaluateMatch(j.data() as CatalogJob, c.data() as Candidate);
     if (old.applicationId) throw new Error('This match already has an application. Manage it under Jobs & JDs.');
-    if (decision === 'Approved' && (fresh.eligibility === 'Ineligible' || fresh.score < 70)) throw new Error('This match is blocked. Correct the underlying requirements before approval.');
+    if (decision === 'Approved' && fresh.eligibility === 'Ineligible') throw new Error('This assignment is blocked. Check job family and whether the vacancy is open.');
     if (fresh.decision !== 'Selected' && !reviewReason.trim()) throw new Error('Enter a reason for your review decision.');
     const applicationId = fresh.id;
     const existingApplication = await tx.get(doc(db, 'jobs', applicationId));
@@ -179,7 +188,7 @@ export async function decideMatch(user: User, matchId: string, decision: 'Approv
       // Application data only. The JD is joined from catalogJobs when read.
       tx.set(doc(db, 'jobs', applicationId), { id: applicationId, catalogId: old.jobId, candidateId: old.candidateId,
         status: 'Selected', matchScore: fresh.score, appliedAt: null, appliedResumeId: null, discoveredAt: timestamp, createdAt: timestamp, updatedAt: timestamp });
-      tx.set(doc(db, 'events', crypto.randomUUID()), { jobId: applicationId, candidateId: old.candidateId, eventType: 'match_approved', title: 'Match approved', detail: reviewReason.trim() || `Matched at ${fresh.score}%`, createdAt: timestamp });
+      tx.set(doc(db, 'events', crypto.randomUUID()), { jobId: applicationId, candidateId: old.candidateId, eventType: 'match_approved', title: 'Candidate assigned', detail: reviewReason.trim() || `Taxonomy family: ${catalog.family}`, createdAt: timestamp });
     }
     tx.set(doc(db, 'logs', crypto.randomUUID()), { actorEmail: user.email, action: `match.${decision.toLowerCase()}`, entityType: 'match', entityId: matchId, details: { reason: reviewReason, score: fresh.score }, createdAt: timestamp });
     return decision === 'Approved' ? applicationId : null;

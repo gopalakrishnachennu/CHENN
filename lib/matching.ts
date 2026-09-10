@@ -1,7 +1,6 @@
 import type { Candidate } from './types';
 import type { JDCoverage, JDAnalysis, ResumeGenerationPlan, StructuredJobRequirements } from './jd-intelligence';
 import { analyzeJD, extractStructuredRequirements } from './jd-intelligence';
-import { candidateRequiredFields } from './requirements';
 
 export type CandidatePreferences = {
   secondaryFamilies: string[]; targetRoles: string[]; locations: string[];
@@ -83,58 +82,22 @@ export async function catalogId(job: Pick<CatalogJob, 'company' | 'title' | 'loc
   const bytes = new TextEncoder().encode(JSON.stringify([job.company, job.title, job.location].map(normalize)));
   return [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(x => x.toString(16).padStart(2, '0')).join('');
 }
+export const MATCH_POLICY_VERSION = 'family-only-v1';
 export function evaluateMatch(job: CatalogJob, candidate: Candidate, at = new Date()): JobMatch {
-  const p = preferences(candidate.matchPreferences);
-  const blocked: string[] = []; const uncertain: string[] = [];
-  const candidateGaps = candidateRequiredFields(candidate);
-  if (candidateGaps.length) uncertain.push(`Candidate profile incomplete: ${candidateGaps.join(', ')}.`);
-  const inList = (list: string[], value: string) => list.some(x => canonical(x) === canonical(value));
-  if (candidate.status !== 'Active') blocked.push('Candidate is not active.');
-  if (job.analysisStatus === 'Pending') blocked.push('Job is saved; analyze and assign its family before matching.');
-  if (job.status !== 'Open' || Date.parse(job.expiresAt) <= at.getTime()) blocked.push('Job is closed or expired.');
-  if (!inList([candidate.family, ...p.secondaryFamilies], job.family)) blocked.push('Job family is not approved for this candidate.');
-  if (job.familyConfidence < 80) uncertain.push('Family classification requires review.');
-  for (const [label, list, value] of [
-    ['Location', p.locations, job.location], ['Work type', p.workTypes, job.workType],
-    ['Authorization', p.authorizations, job.authorization], ['Seniority', p.seniorities, job.seniority],
-  ] as Array<[string, string[], string]>) {
-    if (!list.length || !value || /^(unknown|not specified)$/i.test(value)) uncertain.push(`${label} needs confirmation.`);
-    else if (!inList(list, value) && !inList(list, 'Any')) blocked.push(`${label} does not meet candidate requirements.`);
-  }
-  if (job.minimumYears != null) {
-    if (p.yearsExperience == null) uncertain.push('Experience needs confirmation.');
-    else if (p.yearsExperience < job.minimumYears) blocked.push('Insufficient years of experience.');
-  }
-  if (p.minimumSalary != null) {
-    if (job.salaryMax == null || job.currency !== p.currency) uncertain.push('Salary needs confirmation.');
-    else if (job.salaryMax < p.minimumSalary) blocked.push('Salary is below candidate minimum.');
-  }
-  const verified = (candidate.skills ?? []).filter(x => ['Profile', 'Career'].includes(x.source)).map(x => canonical(x.name));
-  const missing = [...new Set([...job.mandatorySkills, ...job.criticalSkills])].filter(x => !verified.includes(canonical(x)));
-  if (job.criticalSkills.some(x => !verified.includes(canonical(x)))) blocked.push('Missing a critical mandatory skill.');
-  else if (missing.length) uncertain.push('Some mandatory skills are not listed in the candidate profile.');
-  const ratio = (list: string[]) => list.length ? list.filter(x => verified.includes(canonical(x))).length / list.length * 100 : 100;
-  if (!job.mandatorySkills.length && !job.preferredSkills.length) uncertain.push('JD skill requirements need review.');
-  const requirements = job.requirements;
-  if (requirements?.education.length && !(candidate.career?.education.length))
-    uncertain.push('Education requirement needs confirmation.');
-  if (requirements?.certifications.length && !(candidate.career?.certifications.length))
-    uncertain.push('Certification requirement needs confirmation.');
-  if (requirements?.clearance) uncertain.push('Security clearance needs confirmation.');
-  if (requirements?.travel) uncertain.push('Travel requirement needs confirmation.');
-  const scores = { skills: Math.round(ratio(job.mandatorySkills) * .8 + ratio(job.preferredSkills) * .2),
-    role: inList(p.targetRoles, job.role) ? 100 : 40,
-    location: inList(p.locations, job.location) || inList(p.locations, 'Any') ? 100 : 0,
-    experience: job.minimumYears == null || p.yearsExperience == null ? 50 : p.yearsExperience >= job.minimumYears ? 100 : 0,
-    preferences: blocked.length ? 0 : uncertain.some(x => /Authorization|Work type|Seniority|Salary/.test(x)) ? 50 : 100 };
-  if (p.targetRoles.length && !inList(p.targetRoles, job.role)) uncertain.push('Role is not an explicit candidate target.');
-  if (!p.targetRoles.length) uncertain.push('Target roles need confirmation.');
-  const score = Math.round(scores.skills * .45 + scores.role * .2 + scores.experience * .15 + scores.location * .1 + scores.preferences * .1);
-  const intelligence = analyzeJD({ title: job.title, jdText: job.intelligence ? '' : job.jdText, company: job.company, family: job.family }, candidate, undefined, job.intelligence);
-  const decision = blocked.length || score < 70 ? 'Rejected' : uncertain.length || score < p.minimumScore ? 'Review' : 'Selected';
+  const families = [candidate.family, ...(candidate.matchPreferences?.secondaryFamilies ?? [])].filter(Boolean).map(normalize);
+  const assigned = !!job.family?.trim() && job.family !== 'Custom / needs review' && job.analysisStatus !== 'Pending';
+  const familyMatch = assigned && families.includes(normalize(job.family));
+  // Availability is separate from candidate matching: closed vacancies cannot start applications.
+  const available = job.status === 'Open' && Date.parse(job.expiresAt) > at.getTime();
+  const reasons = !assigned ? ['Assign a taxonomy family to this job first.']
+    : familyMatch ? [`Job and candidate share the ${job.family} family.`] : ['Job family is not approved for this candidate.'];
+  if (!available) reasons.push('Job is closed or expired.');
   return { id: `${job.id}_${candidate.id}`, jobId: job.id, candidateId: candidate.id,
-    eligibility: blocked.length ? 'Ineligible' : uncertain.length ? 'Review' : 'Eligible', score, scores,
-    missingMandatory: missing, reasons: [...blocked, ...uncertain, `Score ${score}/100; selection threshold ${p.minimumScore}.`], decision, updatedAt: at.toISOString(), policyVersion: 'family-eligibility-v1', jdCoverage: intelligence.coverage, resumePlan: intelligence.resumePlan };
+    eligibility: familyMatch && available ? 'Eligible' : 'Ineligible',
+    // Kept for existing stored-record compatibility, never presented as a qualification score.
+    score: familyMatch ? 100 : 0, scores: { skills: 0, role: 0, location: 0, experience: 0, preferences: 0 },
+    missingMandatory: [], reasons, decision: familyMatch && available ? 'Selected' : 'Rejected',
+    updatedAt: at.toISOString(), policyVersion: MATCH_POLICY_VERSION };
 }
 
 // CSV parser supports quoted commas, multiline JDs, escaped quotes and UTF-8 BOMs.

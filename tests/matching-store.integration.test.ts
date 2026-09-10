@@ -26,6 +26,16 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('Matching transactions', (
     for (const id of ['a', 'b']) await setDoc(doc(holder.database, 'candidates', id), { id, name: id, firstName: id, lastName: 'Test', phone: '555-0100', location: 'Remote', family: 'DevOps', email: `${id}@example.com`, portalEnabled: true, status: 'Active', skills: [{ name: 'AWS', source: 'Profile', evidence: 'Verified work' }], matchPreferences: preferences({ targetRoles: ['Engineer'], locations: ['Remote'], workTypes: ['Remote'], authorizations: ['US authorized'], seniorities: ['Senior'], yearsExperience: 5 }) });
   });
   afterAll(async () => { await environment.cleanup(); });
+  it('assigns by family even with missing qualifications and incompatible preferences', async () => {
+    await setDoc(doc(holder.database, 'candidates', 'a'), { skills: [], matchPreferences: preferences({ locations: ['Elsewhere'], yearsExperience: 0, minimumScore: 100 }) }, { merge: true });
+    await store.importCatalog(user, [input]);
+    await store.runMatching(user);
+    const data = await store.readMatchingData(user);
+    const match = data.matches.find(m => m.candidateId === 'a')!;
+    expect(match.policyVersion).toBe('family-only-v1');
+    expect(match.eligibility).toBe('Eligible');
+    expect(await store.decideMatch(user, match.id, 'Approved', '')).toBe(match.id);
+  });
   it('saves raw jobs before analysis and only matches after family review', async () => {
     const raw = { ...input, family: '', workType: '' };
     expect(await store.importCatalog(user, [raw], true)).toEqual({ added: 1, duplicates: 0 });

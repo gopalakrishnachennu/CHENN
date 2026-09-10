@@ -1018,7 +1018,7 @@ export async function runFirebaseAction(
     if (job.catalogId) {
       const catalog = (await getDoc(doc(firebaseDb, 'catalogJobs', job.catalogId))).data() as CatalogJob;
       const match = evaluateMatch(catalog, candidate);
-      if (match.eligibility === 'Ineligible' || match.score < 70) throw new Error('This match is no longer eligible. Recheck it in Job matching.');
+      if (match.eligibility === 'Ineligible') throw new Error('Check that the job is open and its taxonomy family matches the candidate.');
       const approved = (await getDoc(doc(firebaseDb, 'jobMatches', `${job.catalogId}_${job.candidateId}`))).data();
       if (approved?.reviewedDecision !== 'Approved' || approved.applicationId !== job.id) throw new Error('Approve this job-candidate match before generating.');
     }
