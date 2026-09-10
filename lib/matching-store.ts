@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocs, getFirestore, increment, runTransaction, setDoc, updateDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, getFirestore, increment, runTransaction, setDoc, updateDoc, writeBatch } from 'firebase/firestore';
 import type { User } from 'firebase/auth';
 import { firebaseApp } from './firebase';
 import { ADMIN_EMAIL } from './constants';
@@ -12,6 +12,15 @@ import { cachedAIRequest } from './ai-request-store';
 import { withReadTimeout } from './read-timeout';
 
 const db = getFirestore(firebaseApp, 'chenn');
+type BatchOperation = (batch: ReturnType<typeof writeBatch>) => void;
+async function commitBatches(operations: BatchOperation[]) {
+  // Keep below Firestore's 500-write limit and leave room for future additions.
+  for (let index = 0; index < operations.length; index += 400) {
+    const batch = writeBatch(db);
+    for (const operation of operations.slice(index, index + 400)) operation(batch);
+    await batch.commit();
+  }
+}
 export async function cachedJDProfile(user: User, input: JDInput, model?: string): Promise<CachedJD> {
   requireAdmin(user);
   if (model) {
@@ -67,21 +76,47 @@ async function expireCatalogJobs() {
 async function recalculateMatches(user: User) {
   const [data, candidateDocs] = await Promise.all([readMatchingDataRaw(), getDocs(collection(db, 'candidates'))]);
   const candidates = candidateDocs.docs.map(d => ({ ...d.data(), id: d.id }) as Candidate);
-  let count = 0;
   const automatic = (await getDoc(doc(db, 'settings', 'platform'))).data()?.autoAssignFamilyMatches === true;
   const readyJobs = data.jobs.filter(job => job.analysisStatus !== 'Pending');
-  for (const job of readyJobs) for (const candidate of candidates) {
-    await runTransaction(db, async tx => {
-      const ref = doc(db, 'jobMatches', `${job.id}_${candidate.id}`);
-      const [previous, freshJob, freshCandidate] = await Promise.all([tx.get(ref), tx.get(doc(db, 'catalogJobs', job.id)), tx.get(doc(db, 'candidates', candidate.id))]);
-      if (!freshJob.exists() || !freshCandidate.exists()) return;
-      const match = evaluateMatch(freshJob.data() as CatalogJob, freshCandidate.data() as Candidate);
-      tx.set(ref, { ...previous.data(), ...match });
-    });
-    if (automatic) await decideMatch(user, `${job.id}_${candidate.id}`, 'Approved', 'Automatically assigned by family taxonomy.', true);
-    count++;
+  const previous = new Map(data.matches.map(match => [match.id, match]));
+  const matches = readyJobs.flatMap(job => candidates.map(candidate => ({ ...previous.get(`${job.id}_${candidate.id}`), ...evaluateMatch(job, candidate) })));
+  await commitBatches(matches.map(match => batch => batch.set(doc(db, 'jobMatches', match.id), match)));
+  if (automatic) await assignFamilyMatches(user, readyJobs, candidates, matches);
+  return matches.length;
+}
+
+async function assignFamilyMatches(user: User, jobs: CatalogJob[], candidates: Candidate[], matches: JobMatch[]) {
+  const [settings, applicationDocs] = await Promise.all([
+    getDoc(doc(db, 'settings', 'platform')),
+    getDocs(collection(db, 'jobs')),
+  ]);
+  if (settings.data()?.autoAssignFamilyMatches !== true) return 0;
+  const jobById = new Map(jobs.map(job => [job.id, job]));
+  const candidateById = new Map(candidates.map(candidate => [candidate.id, candidate]));
+  const applications = new Set(applicationDocs.docs.map(item => item.id));
+  const timestamp = new Date().toISOString();
+  let assigned = 0;
+  const operations: BatchOperation[] = [];
+  for (const match of matches) {
+    const job = jobById.get(match.jobId); const candidate = candidateById.get(match.candidateId);
+    if (!job || !candidate || match.eligibility !== 'Eligible' || match.reviewedDecision === 'Rejected') continue;
+    const applicationId = match.id;
+    if (match.applicationId || applications.has(applicationId)) {
+      operations.push(batch => batch.set(doc(db, 'jobMatches', match.id), { ...match, reviewedDecision: 'Approved', applicationId }));
+      continue;
+    }
+    const reason = 'Automatically assigned by family taxonomy.';
+    operations.push(batch => batch.set(doc(db, 'jobMatches', match.id), { ...match, reviewedDecision: 'Approved', reviewReason: reason, reviewedAt: timestamp, reviewedBy: user.email, applicationId }));
+    operations.push(batch => batch.set(doc(db, 'candidateCatalogAccess', candidate.email, 'jobs', job.id), { candidateId: candidate.id }));
+    operations.push(batch => batch.set(doc(db, 'jobs', applicationId), { id: applicationId, catalogId: job.id, candidateId: candidate.id,
+      status: 'Selected', matchScore: match.score, appliedAt: null, appliedResumeId: null, discoveredAt: timestamp, createdAt: timestamp, updatedAt: timestamp }));
+    operations.push(batch => batch.set(doc(db, 'events', `auto_${applicationId}`), { jobId: applicationId, candidateId: candidate.id, eventType: 'match_approved', title: 'Candidate assigned', detail: reason, createdAt: timestamp }));
+    operations.push(batch => batch.set(doc(db, 'logs', `auto_${applicationId}`), { actorEmail: user.email, action: 'match.approved', entityType: 'match', entityId: match.id, details: { reason, score: match.score }, createdAt: timestamp }));
+    applications.add(applicationId);
+    assigned++;
   }
-  return count;
+  await commitBatches(operations);
+  return assigned;
 }
 export async function readMatchingData(user: User) {
   requireAdmin(user);
@@ -140,12 +175,23 @@ export async function saveCatalogJob(user: User, job: CatalogJob, pendingAnalysi
   if (!pendingAnalysis && normalized.family === 'Custom / needs review') throw new Error('Assign an active job family before completing analysis.');
   const cached = pendingAnalysis ? null : await cachedJDProfile(user, normalized);
   await setDoc(doc(db, 'catalogJobs', job.id), { ...normalized, ...(cached ? profileFields(cached) : {}), analysisStatus: pendingAnalysis ? 'Pending' : 'Ready', id: job.id });
-  if (!pendingAnalysis) await autoAssignFamilyMatches(user);
+  if (!pendingAnalysis) await autoAssignFamilyMatches(user, { jobId: job.id });
 }
-export async function autoAssignFamilyMatches(user: User) {
+export async function autoAssignFamilyMatches(user: User, scope: { jobId?: string; candidateId?: string } = {}) {
   requireAdmin(user);
   const settings = await getDoc(doc(db, 'settings', 'platform'));
-  if (settings.data()?.autoAssignFamilyMatches === true) await runMatching(user);
+  if (settings.data()?.autoAssignFamilyMatches !== true) return 0;
+  const [jobDocs, candidateDocs, matchDocs] = await Promise.all([
+    scope.jobId ? getDoc(doc(db, 'catalogJobs', scope.jobId)).then(snapshot => snapshot.exists() ? [snapshot] : []) : getDocs(collection(db, 'catalogJobs')).then(snapshot => snapshot.docs),
+    scope.candidateId ? getDoc(doc(db, 'candidates', scope.candidateId)).then(snapshot => snapshot.exists() ? [snapshot] : []) : getDocs(collection(db, 'candidates')).then(snapshot => snapshot.docs),
+    getDocs(collection(db, 'jobMatches')),
+  ]);
+  const jobs = jobDocs.map(item => ({ ...item.data(), id: item.id }) as CatalogJob).filter(job => job.analysisStatus !== 'Pending');
+  const candidates = candidateDocs.map(item => ({ ...item.data(), id: item.id }) as Candidate);
+  const previous = new Map(matchDocs.docs.map(item => [item.id, { ...item.data(), id: item.id } as JobMatch]));
+  const matches = jobs.flatMap(job => candidates.map(candidate => ({ ...previous.get(`${job.id}_${candidate.id}`), ...evaluateMatch(job, candidate) })));
+  await commitBatches(matches.map(match => batch => batch.set(doc(db, 'jobMatches', match.id), match)));
+  return assignFamilyMatches(user, jobs, candidates, matches);
 }
 export async function savePreferences(user: User, candidateId: string, input: Parameters<typeof preferences>[0]) {
   requireAdmin(user);
