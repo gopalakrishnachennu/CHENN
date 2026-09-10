@@ -26,6 +26,17 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('Matching transactions', (
     for (const id of ['a', 'b']) await setDoc(doc(holder.database, 'candidates', id), { id, name: id, firstName: id, lastName: 'Test', phone: '555-0100', location: 'Remote', family: 'DevOps', email: `${id}@example.com`, portalEnabled: true, status: 'Active', skills: [{ name: 'AWS', source: 'Profile', evidence: 'Verified work' }], matchPreferences: preferences({ targetRoles: ['Engineer'], locations: ['Remote'], workTypes: ['Remote'], authorizations: ['US authorized'], seniorities: ['Senior'], yearsExperience: 5 }) });
   });
   afterAll(async () => { await environment.cleanup(); });
+  it('loads 50 shared jobs without generating matches, profiles or expiring records on navigation', async () => {
+    await Promise.all(Array.from({ length: 50 }, (_, i) => setDoc(doc(holder.database, 'catalogJobs', `read-test-${i}`), { ...input, id: `read-test-${i}`, status: 'Open', expiresAt: '2000-01-01' })));
+    const first = await store.readMatchingData(user);
+    const again = await store.readMatchingData(user);
+    expect(first.jobs).toHaveLength(50);
+    expect(again).toEqual(first);
+    expect(first.matches).toEqual([]);
+    expect(first.jobs.every(job => job.status === 'Open')).toBe(true);
+    expect((await getDocs(collection(holder.database, 'jdProfiles'))).size).toBe(0);
+    expect((await getDocs(collection(holder.database, 'jobMatches'))).size).toBe(0);
+  });
   it('stores a shared JD once and creates independent candidate applications', async () => {
     expect(await store.importCatalog(user, [input, input])).toEqual({ added: 1, duplicates: 1 });
     expect(await store.runMatching(user)).toBe(2);
@@ -118,6 +129,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('Matching transactions', (
     try {
       for (const id of ['a', 'b']) await setDoc(doc(holder.database, 'candidates', id), { updatedAt: '2026-09-09', career: { experience: [{ company: 'Actual employer', title: 'Engineer', location: 'Remote', start: '2020-01', end: '', current: true, responsibilities: 'Built AWS infrastructure for internal services using documented workflows and reusable configuration, helping the engineering team maintain consistent deployment processes and reliable changes.', achievements: '', technologies: 'AWS' }], education: [], certifications: [], projects: [] } }, { merge: true });
       await store.importCatalog(user, [input]);
+      await store.runMatching(user);
       const data = await store.readMatchingData(user);
       for (const match of data.matches) await store.decideMatch(user, match.id, 'Approved', '');
       const first = await runFirebaseAction(user, 'resume.generate', { jobId: data.matches[0].id });

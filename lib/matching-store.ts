@@ -9,6 +9,7 @@ import { ANALYSIS_VERSION, createJDProfile, jdFingerprint, type CachedJD, type J
 import { adminAIKey } from './ai-client';
 import { aiJDHash, analyzeJDWithLLM, AI_JD_VERSION } from './ai-jd';
 import { cachedAIRequest } from './ai-request-store';
+import { withReadTimeout } from './read-timeout';
 
 const db = getFirestore(firebaseApp, 'chenn');
 export async function cachedJDProfile(user: User, input: JDInput, model?: string): Promise<CachedJD> {
@@ -80,9 +81,9 @@ async function recalculateMatches(user: User) {
 }
 export async function readMatchingData(user: User) {
   requireAdmin(user);
-  await expireCatalogJobs();
-  await recalculateMatches(user);
-  return readMatchingDataRaw();
+  // Navigation is read-only. Recalculation belongs to explicit matching actions;
+  // never hold the catalog hostage to one transaction per job/candidate pair.
+  return withReadTimeout(readMatchingDataRaw());
 }
 function requireAdmin(user: User) {
   if (!user.emailVerified || user.email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) throw new Error('Verified administrator access required.');

@@ -34,12 +34,22 @@ export function JobMatching({ notify, openStudio, applicationView }: { notify: (
   const { state, user, refresh, act } = usePlatform();
   const [data, setData] = useState<{ jobs: CatalogJob[]; matches: JobMatch[] }>({ jobs: [], matches: [] });
   const [tab, setTab] = useState('Catalog'); const [pending, setPending] = useState(false); const [loading, setLoading] = useState(true); const [error, setError] = useState('');
+  const [loaded, setLoaded] = useState(false);
+  const [retry, setRetry] = useState(0);
   const [modal, setModal] = useState<'job' | 'import' | 'review' | null>(null); const [editJob, setEditJob] = useState<CatalogJob | null>(null);
   const [selected, setSelected] = useState<JobMatch | null>(null); const [candidateId, setCandidateId] = useState(state?.candidates[0]?.id ?? '');
   const [decisionFilter, setDecisionFilter] = useState('All'); const [search, setSearch] = useState(''); const [importText, setImportText] = useState('');
   const [suggestion, setSuggestion] = useState<JobSuggestion | null>(null); const [suggestionApplied, setSuggestionApplied] = useState(false); const jobForm = useRef<HTMLFormElement>(null);
-  const load = async () => { if (user) setData(await readMatchingData(user)); };
-  useEffect(() => { let cancelled = false; if (user) void readMatchingData(user).then(x => { if (!cancelled) setData(x); }).catch(e => { if (!cancelled) setError(e.message); }).finally(() => { if (!cancelled) setLoading(false); }); return () => { cancelled = true; }; }, [user]);
+  const load = async () => { if (user) { setData(await readMatchingData(user)); setLoaded(true); } };
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true); setLoaded(false); setError('');
+    if (user) void readMatchingData(user)
+      .then(x => { if (!cancelled) { setData(x); setLoaded(true); } })
+      .catch(e => { if (!cancelled) setError(e.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [user, retry]);
   const perform = async (task: () => Promise<unknown>, message: string) => {
     setPending(true); setError(''); try { await task(); await load(); await refresh(); notify(message); } catch (e) { setError((e as Error).message); notify((e as Error).message, 'error'); } finally { setPending(false); }
   };
@@ -76,10 +86,11 @@ export function JobMatching({ notify, openStudio, applicationView }: { notify: (
   };
   return <section className="space-y-4">
     <div className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="text-2xl font-semibold">Jobs</h1><p className="mt-1 text-sm text-slate-600">Open a job to read its JD and review all matching candidates.</p></div><div className="flex gap-2"><Button variant="outline" disabled={pending} onClick={() => void perform(() => runMatching(user), 'Matches refreshed.')}>Recalculate matches</Button><Button onClick={() => { setEditJob(null); setSuggestion(null); setSuggestionApplied(false); setModal('job'); }}>Add job</Button></div></div>
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{[['Shared jobs', data.jobs.length], ['Selected', data.matches.filter(m => m.decision === 'Selected').length], ['Needs review', data.matches.filter(m => m.decision === 'Review' && !m.reviewedDecision).length], ['Applications', data.matches.filter(m => m.applicationId).length]].map(([label, value]) => <div key={label} className="rounded border bg-white p-4"><p className="text-sm text-slate-600">{label}</p><p className="mt-1 text-2xl font-semibold">{value}</p></div>)}</div>
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{[['Shared jobs', data.jobs.length], ['Selected', data.matches.filter(m => m.decision === 'Selected').length], ['Needs review', data.matches.filter(m => m.decision === 'Review' && !m.reviewedDecision).length], ['Applications', data.matches.filter(m => m.applicationId).length]].map(([label, value]) => <div key={label} className="rounded border bg-white p-4"><p className="text-sm text-slate-600">{label}</p><p className="mt-1 text-2xl font-semibold">{loaded ? value : '—'}</p></div>)}</div>
     <div className="flex gap-1 border-b" role="tablist" aria-label="Job matching views">{['Catalog', 'Matches', 'Candidate preferences', ...(applicationView ? ['Applications'] : [])].map(t => <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)} className={`px-4 py-3 text-sm font-medium ${tab === t ? 'border-b-2 border-blue-700 text-blue-800' : 'text-slate-600'}`}>{t}</button>)}</div>
     {error && <p role="alert" className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}
-    {loading ? <p role="status">Loading matching records…</p> : tab === 'Catalog' ? <>
+    {pending && <p role="status">Processing your request. You can still browse saved jobs below.</p>}
+    {loading ? <p role="status">Loading saved jobs…</p> : !loaded ? <Button variant="outline" onClick={() => setRetry(x => x + 1)}>Retry loading jobs</Button> : tab === 'Catalog' ? <>
       <div className="flex justify-end"><Button variant="outline" onClick={() => setModal('import')}>Import CSV / JSON</Button></div>
       <JobsWorkspace jobs={data.jobs} matches={data.matches} state={state} review={m => { setSelected(m); setModal('review'); }} edit={j => { setEditJob(j); setSuggestion(suggestionFor(j, state.families)); setSuggestionApplied(false); setModal('job'); }} openStudio={openStudio} updateStatus={(id, status) => { void perform(() => act('job.status', { id, status }), 'Application status updated.'); }} />
     </> : tab === 'Matches' ? <>
