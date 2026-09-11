@@ -10,6 +10,8 @@ import { adminAIKey } from './ai-client';
 import { aiJDHash, analyzeJDWithLLM, AI_JD_VERSION } from './ai-jd';
 import { cachedAIRequest } from './ai-request-store';
 import { withReadTimeout } from './read-timeout';
+import { publishedPrompt } from './workflow-prompt-store';
+import { trackedAI, recordCacheHit } from './llm-usage-store';
 
 const db = getFirestore(firebaseApp, 'chenn');
 type BatchOperation = (batch: ReturnType<typeof writeBatch>) => void;
@@ -26,8 +28,9 @@ export async function cachedJDProfile(user: User, input: JDInput, model?: string
   if (model) {
     const key = adminAIKey();
     if (!key) throw new Error('Save your OpenAI API key in Admin Settings first.');
-    const { hash } = await aiJDHash(input, model);
-    return cachedAIRequest(`jd_${hash}`, () => analyzeJDWithLLM({ key, model }, input));
+    const prompt = await publishedPrompt('jd-normalization');
+    const { hash } = await aiJDHash(input, model, prompt);
+    return cachedAIRequest(`jd_${hash}`, () => analyzeJDWithLLM(trackedAI({ key, model }, prompt), input, prompt), () => recordCacheHit('jd-normalization', model));
   }
   const hash = await jdFingerprint(input);
   return runTransaction(db, async tx => {
@@ -39,7 +42,7 @@ export async function cachedJDProfile(user: User, input: JDInput, model?: string
     return result;
   });
 }
-const profileFields = (cached: CachedJD) => ({ jdHash: cached.jdHash, sourceHash: cached.sourceHash ?? cached.jdHash, analysisModel: cached.model ?? '', analysisVersion: cached.analysisVersion, jdProfile: cached.jdProfile, intelligence: cached.intelligence, requirements: cached.requirements });
+const profileFields = (cached: CachedJD) => ({ jdHash: cached.jdHash, sourceHash: cached.sourceHash ?? cached.jdHash, analysisModel: cached.model ?? '', analysisVersion: cached.analysisVersion, jdProfile: cached.jdProfile, intelligence: cached.intelligence, requirements: cached.requirements, ...(cached.promptSnapshot ? { analysisPrompt: cached.promptSnapshot } : {}) });
 export async function ensureCatalogProfile(user: User, jobId: string, model?: string) {
   requireAdmin(user);
   // Retry if an administrator edits the posting while its profile is being prepared.
@@ -51,7 +54,8 @@ export async function ensureCatalogProfile(user: User, jobId: string, model?: st
     if (job.analysisStatus === 'Pending') throw new Error('Analyze this saved job and assign its family before resume generation.');
     const sourceHash = await jdFingerprint(job);
     const current = model ? job.analysisVersion === AI_JD_VERSION && job.analysisModel === model : [ANALYSIS_VERSION, AI_JD_VERSION].includes(job.analysisVersion || '');
-    if (job.jdProfile && job.intelligence && current && (job.sourceHash || job.jdHash) === sourceHash) return job;
+    const promptCurrent = !model || job.jdHash === (await aiJDHash(job, model, await publishedPrompt('jd-normalization'))).hash;
+    if (job.jdProfile && job.intelligence && current && promptCurrent && (job.sourceHash || job.jdHash) === sourceHash) return job;
     const cached = await cachedJDProfile(user, job, model);
     const result = await runTransaction(db, async tx => {
       const fresh = await tx.get(ref);

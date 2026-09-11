@@ -121,6 +121,20 @@ describe.skipIf(!runningEmulators)('Firebase access boundaries', () => {
     await assertFails(getDoc(doc(database, 'candidates', 'candidate-1')));
   });
 
+  it('restricts usage and prompt history to administrators; published history is immutable', async () => {
+    const admin = environment.authenticatedContext('admin', { email: adminEmail }).firestore();
+    const candidate = environment.authenticatedContext('candidate', { email: candidateEmail }).firestore();
+    const anonymous = environment.unauthenticatedContext().firestore();
+    for (const path of ['llmUsage/test-request', 'prompts/resume-generation/versions/1']) {
+      await assertSucceeds(setDoc(doc(admin, path), { status: 'completed', version: 1 }));
+      await assertSucceeds(getDoc(doc(admin, path)));
+      await assertFails(getDoc(doc(candidate, path)));
+      await assertFails(getDoc(doc(anonymous, path)));
+      await assertFails(setDoc(doc(candidate, path), { usage: 0 }));
+    }
+    await assertFails(setDoc(doc(admin, 'prompts/resume-generation/versions/1'), { version: 99 }));
+  });
+
   it('enforces candidate file metadata and read scope', async () => {
     const adminStorage = environment
       .authenticatedContext('admin', { email: adminEmail })

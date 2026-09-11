@@ -26,6 +26,21 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('Matching transactions', (
     for (const id of ['a', 'b']) await setDoc(doc(holder.database, 'candidates', id), { id, name: id, firstName: id, lastName: 'Test', phone: '555-0100', location: 'Remote', family: 'DevOps', email: `${id}@example.com`, portalEnabled: true, status: 'Active', skills: [{ name: 'AWS', source: 'Profile', evidence: 'Verified work' }], matchPreferences: preferences({ targetRoles: ['Engineer'], locations: ['Remote'], workTypes: ['Remote'], authorizations: ['US authorized'], seniorities: ['Senior'], yearsExperience: 5 }) });
   });
   afterAll(async () => { await environment.cleanup(); });
+  it('seeds both prompts once, publishes immutable history and rejects concurrent stale edits', async () => {
+    const { ensureWorkflowPrompts, publishedPrompt, publishWorkflowPrompt, promptHistory } = await import('../lib/workflow-prompt-store');
+    await ensureWorkflowPrompts();
+    const first = await publishedPrompt('jd-normalization');
+    const edited = first.template + '\nAdministrator custom instruction.';
+    const second = await publishWorkflowPrompt('jd-normalization', edited, 1);
+    expect(second.version).toBe(2);
+    await ensureWorkflowPrompts();
+    expect((await publishedPrompt('jd-normalization')).template).toBe(edited);
+    expect((await publishedPrompt('resume-generation')).version).toBe(1);
+    expect((await promptHistory('jd-normalization')).map(p => p.version)).toEqual([2, 1]);
+    await expect(publishWorkflowPrompt('jd-normalization', first.template, 1)).rejects.toThrow('another session');
+    await expect(publishWorkflowPrompt('jd-normalization', 'Too short', 2)).rejects.toThrow('80');
+    await expect(setDoc(doc(holder.database, 'prompts', 'jd-normalization', 'versions', '1'), { template: 'Overwrite' })).rejects.toThrow();
+  });
   it('automatically assigns only while enabled and preserves assignments without duplicates', async () => {
     await store.importCatalog(user, [input]);
     await store.runMatching(user);
@@ -154,7 +169,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('Matching transactions', (
         const claim = { text: source.text, sourceRefs: [source.id], keywords: ['AWS'] };
         value = { summary: [claim], skillCategories: [{ category: 'Cloud', skills: ['AWS'] }], experience: [{ experienceIndex: 0, bullets: [claim] }], gaps: [] };
       }
-      return new Response(JSON.stringify({ id: 'resp_integration', status: 'completed', output: [{ content: [{ type: 'output_text', text: JSON.stringify(value) }] }], usage: { input_tokens: 120, output_tokens: 80 } }));
+      return new Response(JSON.stringify({ id: `resp_${analysisCalls}_${writingCalls}`, status: 'completed', output: [{ content: [{ type: 'output_text', text: JSON.stringify(value) }] }], usage: { input_tokens: 120, output_tokens: 80 } }));
     }));
     try {
       for (const id of ['a', 'b']) await setDoc(doc(holder.database, 'candidates', id), { updatedAt: '2026-09-09', career: { experience: [{ company: 'Actual employer', title: 'Engineer', location: 'Remote', start: '2020-01', end: '', current: true, responsibilities: 'Built AWS infrastructure for internal services using documented workflows and reusable configuration, helping the engineering team maintain consistent deployment processes and reliable changes.', achievements: '', technologies: 'AWS' }], education: [], certifications: [], projects: [] } }, { merge: true });
@@ -169,7 +184,22 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('Matching transactions', (
       await runFirebaseAction(user, 'resume.generate', { jobId: data.matches[1].id });
       expect(analysisCalls).toBe(1); expect(writingCalls).toBe(2);
       await store.readMatchingData(user); expect(analysisCalls).toBe(1);
-      const id = (first.resume as { id: string }).id;
+      const { readLLMUsage } = await import('../lib/llm-usage-store');
+      const { usageSummary } = await import('../lib/llm-usage');
+      expect(usageSummary(await readLLMUsage())).toMatchObject({ calls: 3, total: 600, cacheHits: 1 });
+      const { publishedPrompt, publishWorkflowPrompt } = await import('../lib/workflow-prompt-store');
+      const resumePrompt = await publishedPrompt('resume-generation');
+      await publishWorkflowPrompt('resume-generation', resumePrompt.template + '\nUse clear language.', 1);
+      const revised = await runFirebaseAction(user, 'resume.generate', { jobId: data.matches[0].id });
+      expect(analysisCalls).toBe(1); expect(writingCalls).toBe(3);
+      expect((revised.resume as { aiMetadata: { promptSnapshot: { version: number } } }).aiMetadata.promptSnapshot.version).toBe(2);
+      expect((first.resume as { aiMetadata: { promptSnapshot: { version: number } } }).aiMetadata.promptSnapshot.version).toBe(1);
+      const jdPrompt = await publishedPrompt('jd-normalization');
+      await publishWorkflowPrompt('jd-normalization', jdPrompt.template + '\nKeep skill names concise.', 1);
+      const latest = await runFirebaseAction(user, 'resume.generate', { jobId: data.matches[0].id });
+      expect(analysisCalls).toBe(2); expect(writingCalls).toBe(4);
+      await expect(runFirebaseAction(user, 'resume.approve', { id: (first.resume as { id: string }).id, factualReviewConfirmed: true })).rejects.toThrow('JD profile changed');
+      const id = (latest.resume as { id: string }).id;
       expect((await getDoc(doc(holder.database, 'resumes', id))).data()?.candidateVisible).toBe(false);
       await runFirebaseAction(user, 'resume.approve', { id, factualReviewConfirmed: true });
       expect((await getDoc(doc(holder.database, 'resumes', id))).data()).toMatchObject({ status: 'Approved', candidateVisible: true });

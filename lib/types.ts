@@ -135,7 +135,7 @@ export type ResumeContent = {
 };
 
 export type ResumeVersion = {
-  aiMetadata?: { promptVersion: string; usage: import('./ai-client').AIUsage; gaps: string[]; factualReviewRequired: boolean };
+  aiMetadata?: { promptVersion: string; promptSnapshot?: import('./workflow-prompts').WorkflowPrompt; rejectedDraftErrors?: string[]; usage: import('./ai-client').AIUsage; gaps: string[]; factualReviewRequired: boolean };
   id: string;
   candidateId: string;
   jobId: string;
@@ -175,6 +175,7 @@ export type JobFamily = {
 };
 
 export type Prompt = {
+  stage?: import('./workflow-prompts').PromptStage;
   id: string;
   name: string;
   scope: string;

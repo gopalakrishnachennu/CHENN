@@ -40,6 +40,9 @@ service cloud.firestore {
     match /aiRequests/{requestId} {
       allow read, write: if isAdmin();
     }
+    match /llmUsage/{requestId} {
+      allow read, write: if isAdmin();
+    }
     match /resumeCounters/{jobId} {
       allow read, write: if isAdmin();
     }
@@ -96,6 +99,7 @@ service cloud.firestore {
 
     match /prompts/{promptId} {
       allow read, write: if isAdmin();
+      match /versions/{versionId} { allow read, create: if isAdmin(); allow update, delete: if false; }
     }
 
     match /evaluations/{evaluationId} {

@@ -7,6 +7,7 @@ import { allowedResumeSkills, familyApprovedResumeSkills, generationResumeSkills
 import { confirmQualifications } from '../lib/qualification-confirmation';
 import { highlightRuns } from '../lib/resume-format';
 import { careerSchema } from '../lib/career';
+import { defaultWorkflowPrompt, OUTPUT_CONTRACT } from '../lib/workflow-prompts';
 import type { Candidate, Job } from '../lib/types';
 
 const config = { key: 'test-key-not-a-secret', model: 'configured-model' };
@@ -57,7 +58,9 @@ describe('LLM JD analysis and resume writing', () => {
   });
   it('writes from cached JD only and preserves factual records', async () => {
     const fetch = vi.fn().mockResolvedValue(response(draft())); vi.stubGlobal('fetch', fetch);
-    const generated = await writeResumeWithLLM(config, candidate, job, 'Concise');
+    const prompt = { ...defaultWorkflowPrompt('resume-generation'), version: 3, template: 'My published resume instructions' };
+    const generated = await writeResumeWithLLM(config, candidate, job, '', prompt);
+    expect(JSON.parse(fetch.mock.calls[0][1].body).instructions).toBe(prompt.template + '\n\n' + OUTPUT_CONTRACT);
     const input = JSON.parse(fetch.mock.calls[0][1].body).input;
     expect(input).not.toContain('UNIQUE RAW JD SENTINEL');
     expect(generated.content).toMatchObject({ name: candidate.name, skillCategories: [{ category: 'Cloud', skills: ['AWS'] }], experience: [{ company: 'Real Employer', title: 'Engineer', dates: '2020-01 – Present' }] });

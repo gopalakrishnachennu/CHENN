@@ -1,5 +1,6 @@
 import { highlightRuns } from './resume-format';
-import { Document, HeadingLevel, Packer, Paragraph, TextRun } from 'docx';
+import { Packer } from 'docx';
+import { resumeDocxDocument } from './resume-docx';
 import type { User } from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { getBlob, getStorage, ref, uploadBytes } from 'firebase/storage';
@@ -331,67 +332,7 @@ async function makePdf(content: ResumeContent) {
 }
 
 async function makeDocx(content: ResumeContent) {
-  const rich = (text: string) => highlightRuns(text, content.highlights).map(run => new TextRun({ text: run.text, bold: run.bold }));
-  const children: Paragraph[] = [
-    new Paragraph({ text: content.name, heading: HeadingLevel.TITLE }),
-    new Paragraph({
-      children: [
-        new TextRun({
-          text: content.headline,
-          bold: true,
-          color: '5557C7',
-          size: 26,
-        }),
-      ],
-    }),
-    new Paragraph({ text: content.contact }),
-    new Paragraph({
-      text: 'PROFESSIONAL SUMMARY',
-      heading: HeadingLevel.HEADING_1,
-    }),
-    ...content.summary.split('\n').map(text => new Paragraph({ children: rich(text) })),
-    new Paragraph({ text: 'TECHNICAL SKILLS', heading: HeadingLevel.HEADING_1 }),
-    ...(content.skillCategories?.length ? content.skillCategories.map(group => new Paragraph({ children: [new TextRun({ text: group.category + ': ', bold: true }), new TextRun({ text: group.skills.join(', ') })] })) : [new Paragraph({ text: content.skills.join(' • ') })]),
-  ];
-  if (content.experience.length)
-    children.push(
-      new Paragraph({ text: 'EXPERIENCE', heading: HeadingLevel.HEADING_1 }),
-    );
-  for (const role of content.experience) {
-    children.push(
-      new Paragraph({
-        children: [
-          new TextRun({
-            text: [role.title, role.company].filter(Boolean).join(' | '),
-            bold: true,
-          }),
-        ],
-      }),
-    );
-    if (role.location || role.dates)
-      children.push(
-        new Paragraph({
-          text: [role.location, role.dates].filter(Boolean).join(' | '),
-        }),
-      );
-    children.push(
-      ...role.bullets.map(
-        (bullet) => new Paragraph({ children: rich(bullet), bullet: { level: 0 } }),
-      ),
-    );
-  }
-  if (content.education.length) {
-    children.push(
-      new Paragraph({ text: 'EDUCATION', heading: HeadingLevel.HEADING_1 }),
-    );
-    children.push(
-      ...content.education.map((item) => new Paragraph({ text: item })),
-    );
-  }
-  for (const section of ['certifications', 'projects'] as const) {
-    if (content[section]?.length) children.push(new Paragraph({ text: section.toUpperCase(), heading: HeadingLevel.HEADING_1 }), ...content[section]!.map(text => new Paragraph({ text })));
-  }
-  return Packer.toBlob(new Document({ sections: [{ children }] }));
+  return Packer.toBlob(resumeDocxDocument(content));
 }
 
 function triggerDownload(blob: Blob, filename: string) {

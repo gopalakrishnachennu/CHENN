@@ -2,7 +2,7 @@ import { doc, getFirestore, runTransaction } from 'firebase/firestore';
 import { firebaseApp } from './firebase';
 
 // External calls must never run inside a retryable Firestore transaction.
-export async function cachedAIRequest<T>(id: string, producer: () => Promise<T>): Promise<T> {
+export async function cachedAIRequest<T>(id: string, producer: () => Promise<T>, onCacheHit?: () => Promise<void>): Promise<T> {
   const db = getFirestore(firebaseApp, 'chenn');
   const ref = doc(db, 'aiRequests', id);
   const attempt = crypto.randomUUID();
@@ -13,7 +13,7 @@ export async function cachedAIRequest<T>(id: string, producer: () => Promise<T>)
     tx.set(ref, { status: 'running', attempt, startedAt: Date.now() });
     return null;
   });
-  if (ready) return ready.result;
+  if (ready) { await onCacheHit?.(); return ready.result; }
   try {
     const result = await producer();
     await runTransaction(db, async tx => {

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { WorkflowStudio, LLMUsageDashboard } from '@/components/intelligence/workflow-studio';
 import {
   Activity,
   Archive,
@@ -2758,6 +2759,8 @@ function IntelligencePage({ notify }: { notify: AdminPortalProps['notify'] }) {
         }
       />
       <FamilyAssignmentToggle />
+      <WorkflowStudio />
+      <LLMUsageDashboard />
       <div className="grid gap-5 lg:grid-cols-2">
         <section className="rounded-2xl border bg-white p-6">
           <div className="flex items-start justify-between">
@@ -2821,9 +2824,9 @@ function IntelligencePage({ notify }: { notify: AdminPortalProps['notify'] }) {
         <section className="rounded-2xl border bg-white p-6">
           <div className="flex items-start justify-between">
             <div>
-              <h2 className="text-base font-semibold">Prompt studio</h2>
+              <h2 className="text-base font-semibold">Legacy prompt notes</h2>
               <p className="mt-1 text-xs text-[#8c95a5]">
-                Versioned custom prompt layers
+                Archived configuration notes. Use the workflow prompts above for generation.
               </p>
             </div>
             <button
@@ -2837,7 +2840,7 @@ function IntelligencePage({ notify }: { notify: AdminPortalProps['notify'] }) {
             </button>
           </div>
           <div className="mt-5 space-y-3">
-            {state.prompts.map((prompt) => (
+            {state.prompts.filter(prompt => !prompt.stage).map((prompt) => (
               <button
                 key={prompt.id}
                 onClick={() => {

@@ -24,6 +24,9 @@ import { autoAssignFamilyMatches, hydrateJob, ensureCatalogProfile, cachedJDProf
 import { adminAIKey } from './ai-client';
 import { writeResumeWithLLM, validateAIResumeEdit, candidateGenerationFacts, RESUME_PROMPT_VERSION } from './ai-resume';
 import { cachedAIRequest } from './ai-request-store';
+import { ensureWorkflowPrompts, publishedPrompt, publishWorkflowPrompt } from './workflow-prompt-store';
+import type { PromptStage } from './workflow-prompts';
+import { trackedAI, recordCacheHit, recordOutcome } from './llm-usage-store';
 import { careerSchema, emptyCareer } from './career';
 import {
   careerEvidence,
@@ -458,7 +461,7 @@ export async function readFirebaseState(user: User): Promise<AppState> {
       'Your Google account does not expose a verified email address.',
     );
   const admin = isAdmin(user);
-  if (admin) await seedFirebase(user);
+  if (admin) { await seedFirebase(user); await ensureWorkflowPrompts(); }
 
   let candidates: Candidate[];
   if (admin) {
@@ -1018,16 +1021,18 @@ export async function runFirebaseAction(
       const cached = await cachedJDProfile(user, job, model);
       Object.assign(job, { jdHash: cached.jdHash, analysisVersion: cached.analysisVersion, jdProfile: cached.jdProfile, intelligence: cached.intelligence });
     }
-    const activePrompt = (await listDocuments<Prompt>('prompts')).filter(item => item.active).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+    const activePrompt = await publishedPrompt('resume-generation');
     const template = String(payload.template ?? 'Modern ATS');
     const candidateSourceHash = await sha256(candidateGenerationFacts(candidate));
     const inputHash = await sha256({ candidate: candidateGenerationFacts(candidate),
-      job: { id: job.id, jdHash: job.jdHash, targetRole: job.targetRole, title: job.title, company: job.company }, model, template, customPrompt: activePrompt?.template ?? '', promptVersion: RESUME_PROMPT_VERSION });
+      job: { id: job.id, jdHash: job.jdHash, targetRole: job.targetRole, title: job.title, company: job.company }, model, template, customPrompt: activePrompt.template, publishedPromptId: activePrompt.id, publishedPromptVersion: activePrompt.version, promptVersion: RESUME_PROMPT_VERSION });
     const result = await cachedAIRequest(`resume_${inputHash}`, async () => {
       // Recover a completed save if the request-ledger acknowledgement was interrupted.
       const recovered = await listDocuments<ResumeVersion>('resumes', [where('generationSnapshot.inputHash', '==', inputHash)]);
       if (recovered.length) return { resumeId: recovered.sort((a, b) => b.version - a.version)[0].id };
-      const generated = await writeResumeWithLLM({ key, model }, candidate, job, activePrompt?.template ?? '');
+      const tracking = trackedAI({ key, model }, activePrompt);
+      const generated = await writeResumeWithLLM(tracking, candidate, job, '', activePrompt);
+      await recordOutcome(tracking.usageId, generated.fallback ? 'validation-fallback' : 'resume-written', generated.rejectedDraftErrors);
       const family = await familyByName(job.family);
       const plan = buildSkillPlan(candidate.skills ?? [], family, job.mandatorySkills, job.preferredSkills, { allowFamilyContext: false, allowSupportingContext: false });
       const versions = await listDocuments<ResumeVersion>('resumes', [where('jobId', '==', jobId)]);
@@ -1045,7 +1050,7 @@ export async function runFirebaseAction(
           version, content: generated.content, skillPlan: plan,
           scores: { jdMatch: calculateMatch(plan), ats: 0, recruiterSafe: 0, evidence: generated.validation.passed ? 100 : 0 },
           template, status: 'Ready for review', engine: generated.fallback ? 'grounded-fallback-v1' : 'openai-resume-v1', evidenceMap: generated.evidenceMap, validation: { passed: generated.validation.passed, errors: generated.validation.errors, warnings: generated.validation.warnings, claimCount: generated.validation.claimCount },
-          aiMetadata: { promptVersion: generated.promptVersion, usage: generated.usage, gaps: generated.gaps, factualReviewRequired: true },
+          aiMetadata: { promptVersion: generated.promptVersion, promptSnapshot: activePrompt, rejectedDraftErrors: generated.rejectedDraftErrors, usage: generated.usage, gaps: generated.gaps, factualReviewRequired: true },
           generationSnapshot: { jdHash: job.jdHash, analysisVersion: job.analysisVersion, candidateSourceHash, candidateUpdatedAt: candidate.updatedAt, jobUpdatedAt: job.updatedAt, ...(job.catalogId ? { catalogId: job.catalogId } : {}), matchPolicyVersion: 'family-eligibility-v2', ...(activePrompt ? { promptId: activePrompt.id, promptVersion: activePrompt.version } : {}), model, template, inputHash },
           createdAt: now(), approvedAt: null, candidateVisible: false,
         };
@@ -1055,7 +1060,7 @@ export async function runFirebaseAction(
       });
       await audit(actorEmail, 'resume.generated', 'resume', id, { jobId, inputHash, model, engine: generated.fallback ? 'grounded-fallback-v1' : 'openai-resume-v1', fallbackReasonCount: generated.fallbackReasonCount, usage: generated.usage });
       return { resumeId: id };
-    });
+    }, () => recordCacheHit('resume-generation', model));
     const stored = await getDoc(doc(firebaseDb, 'resumes', result.resumeId));
     if (!stored.exists()) throw new Error('The cached resume was removed. Update candidate evidence or prompt before regenerating.');
     const storedResume = stored.data() as ResumeVersion;
@@ -1215,7 +1220,13 @@ export async function runFirebaseAction(
   }
 
   if (action === 'prompt.save') {
+    if (payload.stage) {
+      const prompt = await publishWorkflowPrompt(payload.stage as PromptStage, String(payload.template ?? ''), Number(payload.expectedVersion));
+      await audit(actorEmail, 'prompt.published', 'prompt', prompt.id, { version: prompt.version });
+      return { ok: true, message: `${prompt.name} version ${prompt.version} published.`, id: prompt.id };
+    }
     const id = String(payload.id ?? crypto.randomUUID());
+    if (['jd-normalization', 'resume-generation'].includes(id)) throw new Error('Use the workflow prompt editor to publish this prompt.');
     const current = await getDoc(doc(firebaseDb, 'prompts', id));
     const previous = current.exists() ? (current.data() as Prompt) : undefined;
     const prompt: Prompt = {
